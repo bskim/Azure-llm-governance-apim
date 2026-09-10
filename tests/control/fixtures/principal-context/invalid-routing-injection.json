@@ -1,0 +1,38 @@
+{
+  "contractVersion": "v1",
+  "backendUrl": "https://forbidden.invalid/",
+  "trust": {
+    "source": "local-deterministic",
+    "validationId": "validation-routing-001",
+    "validatedAt": "2026-07-24T00:00:00Z",
+    "credentialExpiresAt": "2026-07-24T01:00:00Z",
+    "validationState": "local-trusted",
+    "callerSupplied": false
+  },
+  "subject": {
+    "tenantId": "tenant-synthetic",
+    "subjectId": "user-synthetic-routing",
+    "principalType": "user"
+  },
+  "application": {
+    "applicationId": "app-synthetic-cli",
+    "authenticationFlow": "delegated"
+  },
+  "memberships": {
+    "snapshotId": "snapshot-routing-001",
+    "status": "empty-complete",
+    "source": "local-fixture",
+    "tenantId": "tenant-synthetic",
+    "subjectId": "user-synthetic-routing",
+    "resolvedAt": "2026-07-23T23:59:00Z",
+    "expiresAt": "2026-07-24T00:30:00Z",
+    "maxAgeSeconds": 1860,
+    "sourceRevision": "revision-routing-001",
+    "groups": []
+  },
+  "correlation": {
+    "source": "server-generated",
+    "requestId": "request-routing-001",
+    "attempt": 1
+  }
+}

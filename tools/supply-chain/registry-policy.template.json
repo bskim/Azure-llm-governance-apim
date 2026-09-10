@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "approvedRegistryOrigins": [
+    "<approved-registry-origin>"
+  ],
+  "effectiveRegistryOrigin": "<approved-registry-origin>",
+  "allowedIntegrityAlgorithms": [
+    "<customer-approved-sri-algorithm>"
+  ],
+  "exactVersionsRequired": true,
+  "integrityRequired": true,
+  "packageManagerIntegrityEnforced": true,
+  "lockfileSha256": "<current-package-lock-sha256>",
+  "versionInventorySha256": "<current-version-inventory-sha256>"
+}

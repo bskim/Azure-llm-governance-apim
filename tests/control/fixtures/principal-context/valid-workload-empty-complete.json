@@ -1,0 +1,38 @@
+{
+  "contractVersion": "v1",
+  "trust": {
+    "source": "local-deterministic",
+    "validationId": "validation-workload-001",
+    "validatedAt": "2026-07-24T00:00:00Z",
+    "credentialExpiresAt": "2026-07-24T01:00:00Z",
+    "validationState": "local-trusted",
+    "callerSupplied": false
+  },
+  "subject": {
+    "tenantId": "tenant-synthetic",
+    "subjectId": "workload-synthetic-001",
+    "principalType": "workload"
+  },
+  "application": {
+    "applicationId": "app-synthetic-worker",
+    "applicationInstanceId": "instance-synthetic-001",
+    "authenticationFlow": "application"
+  },
+  "memberships": {
+    "snapshotId": "snapshot-workload-001",
+    "status": "empty-complete",
+    "source": "local-fixture",
+    "tenantId": "tenant-synthetic",
+    "subjectId": "workload-synthetic-001",
+    "resolvedAt": "2026-07-23T23:59:00Z",
+    "expiresAt": "2026-07-24T00:30:00Z",
+    "maxAgeSeconds": 1860,
+    "sourceRevision": "revision-workload-001",
+    "groups": []
+  },
+  "correlation": {
+    "source": "server-generated",
+    "requestId": "request-workload-001",
+    "attempt": 1
+  }
+}

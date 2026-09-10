@@ -1,0 +1,24 @@
+{
+  "contractVersion": "v1",
+  "decision": "allow",
+  "reasonCode": "most-restrictive-policy",
+  "effectiveRoles": ["governance-admin"],
+  "permittedReadScopes": ["self", "team", "global"],
+  "permittedTeamKeys": [],
+  "modelAllowlist": ["coding-primary"],
+  "limits": {
+    "requestsPerMinute": 70,
+    "tokensPerMinute": 70000
+  },
+  "appliedAssignments": [],
+  "appliedBindings": [],
+  "assignmentSnapshotId": "assignment-snapshot-fixture-001",
+  "assignmentSnapshotVersion": 7,
+  "entitlementSnapshotId": "entitlement-snapshot-fixture-001",
+  "entitlementSnapshotVersion": 11,
+  "membershipSnapshotId": "snapshot-user-001",
+  "evaluationTime": "2026-07-24T00:00:00Z",
+  "requestBody": {
+    "messages": []
+  }
+}

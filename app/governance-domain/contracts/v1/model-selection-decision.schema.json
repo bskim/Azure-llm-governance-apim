@@ -1,0 +1,148 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/llm-governance/contracts/v1/model-selection-decision.schema.json",
+  "title": "Model Selection Decision V1",
+  "description": "The body-free record of which model a request was governed onto. This is the accounting and audit view, not the gateway's decision: the gateway selects the model and the local selector is its proven-equivalent reference. What this document adds is what a usage record needs and the gateway does not carry, namely provider identity on both sides and the quality of the calling application's attribution.",
+  "x-contract-direction": "server-output-only",
+  "x-semantic-validation-required": true,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractVersion",
+    "documentType",
+    "decision",
+    "reasonCode",
+    "requested",
+    "effective",
+    "hops",
+    "trigger",
+    "applicationAttribution",
+    "exhausted",
+    "configVersion",
+    "registrySnapshotId",
+    "registrySnapshotVersion",
+    "evaluationTime"
+  ],
+  "properties": {
+    "contractVersion": { "const": "v1" },
+    "documentType": { "const": "model-selection-decision" },
+    "decision": {
+      "description": "'unavailable' means the record could not be completed, not that the request failed. A request may have been served while the catalogue needed to describe it was absent.",
+      "enum": ["selected", "denied", "unavailable"]
+    },
+    "reasonCode": { "$ref": "#/$defs/safeId" },
+    "requested": { "$ref": "#/$defs/modelIdentity" },
+    "effective": {
+      "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/modelIdentity" }]
+    },
+    "hops": {
+      "description": "Downgrade is single step, so this is 0 or 1. A longer ladder is a documented extension point rather than a shipped behaviour.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "trigger": { "$ref": "#/$defs/trigger" },
+    "applicationAttribution": { "$ref": "#/$defs/applicationAttribution" },
+    "exhausted": {
+      "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/exhausted" }]
+    },
+    "configVersion": {
+      "oneOf": [{ "type": "null" }, { "type": "integer", "minimum": 1 }]
+    },
+    "registrySnapshotId": { "$ref": "#/$defs/safeId" },
+    "registrySnapshotVersion": { "type": "integer", "minimum": 1 },
+    "evaluationTime": { "type": "string", "format": "date-time" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "decision": { "const": "selected" } }, "required": ["decision"] },
+      "then": { "properties": { "effective": { "type": "object" } } }
+    },
+    {
+      "if": {
+        "properties": { "decision": { "enum": ["denied", "unavailable"] } },
+        "required": ["decision"]
+      },
+      "then": { "properties": { "effective": { "type": "null" }, "hops": { "const": 0 } } }
+    }
+  ],
+  "$defs": {
+    "safeId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "modelAlias": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9._-]+$"
+    },
+    "providerKey": {
+      "enum": ["azure-openai", "anthropic", "meta", "mistral", "cohere", "other"]
+    },
+    "modelIdentity": {
+      "description": "Provider identity is stated on both sides so a provider change can never be implicit. It is null only when the catalogue could not supply it, and that case is always accompanied by an unavailable decision.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["modelKey", "providerKey"],
+      "properties": {
+        "modelKey": { "$ref": "#/$defs/modelAlias" },
+        "providerKey": {
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/providerKey" }]
+        }
+      }
+    },
+    "trigger": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "warnThresholdPercent", "breachedScopes"],
+      "properties": {
+        "kind": { "enum": ["none", "threshold-breach", "evidence-unavailable"] },
+        "warnThresholdPercent": {
+          "oneOf": [{ "type": "null" }, { "type": "integer", "minimum": 1, "maximum": 99 }]
+        },
+        "breachedScopes": {
+          "description": "Budget pressure is measured whether or not a downgrade was configured, because those are separate facts and an audit record needs the second one even when no plan exists.",
+          "type": "array",
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": { "enum": ["organization", "team", "subject", "application"] }
+        }
+      }
+    },
+    "applicationAttribution": {
+      "description": "Present on every branch, including an unavailable one, because an unavailable decision is still attributed to a caller.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["applicationKey", "quality", "displayCode", "reasonCode"],
+      "properties": {
+        "applicationKey": { "type": "string", "pattern": "^ak[0-9]+-[A-Za-z0-9._-]{16,120}$" },
+        "quality": {
+          "description": "'strong' is a reviewed client-specific registration or application role. 'generic' is a shared developer tool. Null means the catalogue could not resolve the caller, and a null is never presented as a specific coding agent.",
+          "oneOf": [{ "type": "null" }, { "enum": ["strong", "generic"] }]
+        },
+        "displayCode": {
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/safeId" }]
+        },
+        "reasonCode": { "$ref": "#/$defs/safeId" }
+      }
+    },
+    "exhausted": {
+      "description": "Why budget pressure produced no downgrade. Without the blocking class, a user-facing reason degrades to 'fallback did not happen', which an administrator cannot act on.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["modelKey", "providerKey", "blockedBy", "unenforcedPolicy"],
+      "properties": {
+        "modelKey": { "$ref": "#/$defs/modelAlias" },
+        "providerKey": { "$ref": "#/$defs/providerKey" },
+        "blockedBy": { "$ref": "#/$defs/safeId" },
+        "unenforcedPolicy": {
+          "description": "A plan that compiled to nothing and a deployment with no plan reach the request path identically, so a configured denial can be asked for and not carried out. Recording it as a denial would describe something that did not happen; omitting it would hide the gap from the auditor who configured it.",
+          "oneOf": [{ "type": "null" }, { "const": "deny" }]
+        }
+      }
+    }
+  }
+}

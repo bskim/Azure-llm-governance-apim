@@ -1,0 +1,38 @@
+{
+  "contractVersion": "v1",
+  "trust": {
+    "source": "local-deterministic",
+    "validationId": "validation-ambiguous-001",
+    "validatedAt": "2026-07-24T00:00:00Z",
+    "credentialExpiresAt": "2026-07-24T01:00:00Z",
+    "validationState": "local-trusted",
+    "callerSupplied": false
+  },
+  "subject": {
+    "tenantId": "tenant-synthetic",
+    "subjectId": "user-synthetic-ambiguous",
+    "principalType": "user"
+  },
+  "application": {
+    "applicationId": "app-synthetic-cli",
+    "authenticationFlow": "delegated"
+  },
+  "memberships": {
+    "snapshotId": "snapshot-ambiguous-001",
+    "status": "ambiguous",
+    "source": "control-plane",
+    "tenantId": "tenant-synthetic",
+    "subjectId": "user-synthetic-ambiguous",
+    "resolvedAt": "2026-07-23T23:59:00Z",
+    "expiresAt": "2026-07-24T00:30:00Z",
+    "maxAgeSeconds": 1860,
+    "sourceRevision": "revision-ambiguous-001",
+    "reason": "duplicate-canonical-mapping",
+    "groups": []
+  },
+  "correlation": {
+    "source": "server-generated",
+    "requestId": "request-ambiguous-001",
+    "attempt": 1
+  }
+}

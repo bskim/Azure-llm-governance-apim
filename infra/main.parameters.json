@@ -1,0 +1,117 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "environmentName": {
+      "value": "${AZURE_ENV_NAME}"
+    },
+    "location": {
+      "value": "${AZURE_LOCATION}"
+    },
+    "gatewayResourceGroupName": {
+      "value": "${GATEWAY_RESOURCE_GROUP_NAME}"
+    },
+    "publisherName": {
+      "value": "Customer AI Platform"
+    },
+    "publisherEmail": {
+      "value": "owner@example.invalid"
+    },
+    "entraApplicationOwnerObjectId": {
+      "value": "${ENTRA_APPLICATION_OWNER_OBJECT_ID}"
+    },
+    "entraDeveloperClientApplicationId": {
+      "value": "${ENTRA_DEVELOPER_CLIENT_APPLICATION_ID=00000000-0000-0000-0000-000000000000}"
+    },
+    "governanceAdministratorPrincipalId": {
+      "value": "${GOVERNANCE_ADMINISTRATOR_PRINCIPAL_ID}"
+    },
+    "principalDerivationSecret": {
+      "value": "${PRINCIPAL_DERIVATION_SECRET=}"
+    },
+    "principalKeyMode": {
+      "value": "${PRINCIPAL_KEY_MODE=direct}"
+    },
+    "principalKeyStoreName": {
+      "value": "${PRINCIPAL_KEY_STORE_NAME=}"
+    },
+    "principalKeySecretName": {
+      "value": "${PRINCIPAL_KEY_SECRET_NAME=}"
+    },
+    "notificationWebhookSecretName": {
+      "value": "${NOTIFICATION_WEBHOOK_SECRET_NAME=}"
+    },
+    "governanceScopeGroupId": {
+      "value": "${GOVERNANCE_SCOPE_GROUP_ID=platform-engineering}"
+    },
+    "governanceKnownTeamKeys": {
+      "value": "${GOVERNANCE_KNOWN_TEAM_KEYS=developer-experience,platform-engineering}"
+    },
+    "governanceMembershipGroupIds": {
+      "value": "${GOVERNANCE_MEMBERSHIP_GROUP_IDS=}"
+    },
+    "foundryResourceGroupName": {
+      "value": "${FOUNDRY_RESOURCE_GROUP_NAME}"
+    },
+    "foundryAccountName": {
+      "value": "${FOUNDRY_ACCOUNT_NAME}"
+    },
+    "foundryProjectName": {
+      "value": "${FOUNDRY_PROJECT_NAME}"
+    },
+    "logicalModelAlias": {
+      "value": "${GATEWAY_LOGICAL_MODEL_ALIAS}"
+    },
+    "defaultModelDeploymentName": {
+      "value": "${FOUNDRY_DEFAULT_MODEL_DEPLOYMENT}"
+    },
+    "deployGateway": {
+      "value": "${DEPLOY_GATEWAY=true}"
+    },
+    "apimSku": {
+      "value": "${APIM_SKU=BasicV2}"
+    },
+    "createFoundry": {
+      "value": "${CREATE_FOUNDRY=false}"
+    },
+    "secondaryFoundryAccountName": {
+      "value": "${SECONDARY_FOUNDRY_ACCOUNT_NAME=}"
+    },
+    "pooledModelDeployments": {
+      "value": "${POOLED_MODEL_DEPLOYMENTS=}"
+    },
+    "modelName": {
+      "value": "${FOUNDRY_MODEL_NAME=gpt-oss-120b}"
+    },
+    "modelVersion": {
+      "value": "${FOUNDRY_MODEL_VERSION=1}"
+    },
+    "modelFormat": {
+      "value": "${FOUNDRY_MODEL_FORMAT=OpenAI-OSS}"
+    },
+    "modelSkuName": {
+      "value": "${FOUNDRY_MODEL_SKU=GlobalStandard}"
+    },
+    "modelCapacity": {
+      "value": "${FOUNDRY_MODEL_CAPACITY=10}"
+    },
+    "secondModelDeployments": {
+      "value": "${FOUNDRY_SECOND_MODEL_DEPLOYMENTS=[]}"
+    },
+    "controlPlaneAlwaysReadyInstances": {
+      "value": "${CONTROL_PLANE_ALWAYS_READY_INSTANCES=1}"
+    },
+    "controlPlaneMaximumInstanceCount": {
+      "value": "${CONTROL_PLANE_MAXIMUM_INSTANCE_COUNT=28}"
+    },
+    "controlPlaneInstanceMemoryMB": {
+      "value": "${CONTROL_PLANE_INSTANCE_MEMORY_MB=2048}"
+    },
+    "governanceAdministrationIngress": {
+      "value": "${GOVERNANCE_ADMINISTRATION_INGRESS=public-authenticated}"
+    },
+    "rollupStartedFrom": {
+      "value": "${ROLLUP_STARTED_FROM=}"
+    }
+  }
+}

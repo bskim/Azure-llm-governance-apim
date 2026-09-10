@@ -1,0 +1,409 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/llm-governance/contracts/v1/principal-context.schema.json",
+  "title": "Trusted Principal Context V1",
+  "description": "Server-constructed output contract. Public request bodies and caller-controlled headers must never deserialize directly into this context. JSON Schema validation and semantic validation are both required before authorization.",
+  "x-contract-direction": "server-output-only",
+  "x-semantic-validation-required": true,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractVersion",
+    "trust",
+    "subject",
+    "application",
+    "memberships",
+    "correlation"
+  ],
+  "properties": {
+    "contractVersion": {
+      "const": "v1"
+    },
+    "trust": {
+      "$ref": "#/$defs/trust"
+    },
+    "subject": {
+      "$ref": "#/$defs/subject"
+    },
+    "application": {
+      "$ref": "#/$defs/application"
+    },
+    "memberships": {
+      "$ref": "#/$defs/memberships"
+    },
+    "correlation": {
+      "$ref": "#/$defs/correlation"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "trust": {
+            "properties": {
+              "source": {
+                "const": "local-deterministic"
+              }
+            },
+            "required": [
+              "source"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "trust": {
+            "properties": {
+              "validationState": {
+                "const": "local-trusted"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "trust": {
+            "properties": {
+              "source": {
+                "const": "entra-validated"
+              }
+            },
+            "required": [
+              "source"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "trust": {
+            "properties": {
+              "validationState": {
+                "const": "validated"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "subject": {
+            "properties": {
+              "principalType": {
+                "const": "user"
+              }
+            },
+            "required": [
+              "principalType"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "application": {
+            "properties": {
+              "authenticationFlow": {
+                "const": "delegated"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "subject": {
+            "properties": {
+              "principalType": {
+                "const": "workload"
+              }
+            },
+            "required": [
+              "principalType"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "application": {
+            "properties": {
+              "authenticationFlow": {
+                "const": "application"
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "safeId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "trust": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "validationId",
+        "validatedAt",
+        "credentialExpiresAt",
+        "validationState",
+        "callerSupplied"
+      ],
+      "properties": {
+        "source": {
+          "enum": [
+            "local-deterministic",
+            "entra-validated"
+          ]
+        },
+        "validationId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "validatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "credentialExpiresAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "validationState": {
+          "enum": [
+            "local-trusted",
+            "validated"
+          ]
+        },
+        "callerSupplied": {
+          "const": false
+        }
+      }
+    },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tenantId",
+        "subjectId",
+        "principalType"
+      ],
+      "properties": {
+        "tenantId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "subjectId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "principalType": {
+          "enum": [
+            "user",
+            "workload"
+          ]
+        }
+      }
+    },
+    "application": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "applicationId",
+        "authenticationFlow"
+      ],
+      "properties": {
+        "applicationId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "applicationInstanceId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "authenticationFlow": {
+          "enum": [
+            "delegated",
+            "application"
+          ]
+        }
+      }
+    },
+    "group": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "groupId",
+        "membership",
+        "authorizationRelevant"
+      ],
+      "properties": {
+        "groupId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "membership": {
+          "enum": [
+            "direct",
+            "nested",
+            "transitive"
+          ]
+        },
+        "authorizationRelevant": {
+          "type": "boolean"
+        }
+      }
+    },
+    "memberships": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "snapshotId",
+        "status",
+        "source",
+        "tenantId",
+        "subjectId",
+        "resolvedAt",
+        "expiresAt",
+        "maxAgeSeconds",
+        "sourceRevision",
+        "groups"
+      ],
+      "properties": {
+        "snapshotId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "status": {
+          "enum": [
+            "complete",
+            "empty-complete",
+            "unmapped",
+            "incomplete",
+            "stale",
+            "ambiguous",
+            "source-unavailable"
+          ]
+        },
+        "source": {
+          "enum": [
+            "local-fixture",
+            "entra-adapter",
+            "control-plane",
+            "directory-claim"
+          ]
+        },
+        "tenantId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "subjectId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "resolvedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "maxAgeSeconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3600
+        },
+        "sourceRevision": {
+          "$ref": "#/$defs/safeId"
+        },
+        "groups": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/group"
+          }
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "enum": [
+                  "unmapped",
+                  "incomplete",
+                  "stale",
+                  "ambiguous",
+                  "source-unavailable"
+                ]
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "required": [
+              "reason"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "empty-complete"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "groups": {
+                "maxItems": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    "correlation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "requestId",
+        "attempt"
+      ],
+      "properties": {
+        "source": {
+          "const": "server-generated"
+        },
+        "requestId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "traceId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "parentCorrelationId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    }
+  }
+}

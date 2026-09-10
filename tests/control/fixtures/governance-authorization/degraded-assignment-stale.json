@@ -1,0 +1,12 @@
+{
+  "contractVersion": "v1",
+  "snapshotId": "assignment-snapshot-stale-001",
+  "tenantId": "tenant-synthetic",
+  "version": 8,
+  "status": "stale",
+  "capturedAt": "2026-07-23T23:55:00Z",
+  "expiresAt": "2026-07-24T00:30:00Z",
+  "sourceRevision": "assignment-source-stale-001",
+  "reason": "control-plane-lag",
+  "assignments": []
+}

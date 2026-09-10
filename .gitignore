@@ -1,0 +1,54 @@
+# Local planning and deployment state
+.azure/
+.internal/
+.d2-device-canary.json
+AGENTS.md
+
+# Local VS Code workspace metadata
+*.code-workspace
+.vscode/
+
+# Local repository guidance and internal engineering decisions. These files remain
+# tracked in the private working history but are omitted from a fresh public snapshot.
+.github/copilot-instructions.md
+docs/decisions/
+
+# Local C0 runtime state
+.c0/
+
+# Local corporate npm registry/proxy configuration and credentials
+.npmrc
+
+# Installed dependencies
+node_modules/
+tests/distribution/.test-work/
+
+# Repository-local generated supply-chain evidence
+.supply-chain-work/
+
+# Local public-snapshot candidates and archives
+.public-distribution/
+*.public-snapshot.zip
+*.public-snapshot.tgz
+
+# Internal analysis, requirements, and review documents
+docs/internal/
+docs/reference-sample-*.md
+docs/source-analysis*.md
+docs/requirements*.md
+docs/implementation-plan*.md
+docs/review*.md
+docs/reviews/
+
+# Internal source and license research. Publish required third-party notices
+# separately if external code is incorporated later.
+provenance/
+# Azure Functions local settings may carry connection values
+local.settings.json
+
+# Browser bundle produced by tools/build-admin-ui.mjs
+app/admin-ui/public/vendor/
+app/admin-ui/public/admin-config.json
+
+# Third-party authoring skills used while writing docs. Used, not redistributed.
+.github/skills/

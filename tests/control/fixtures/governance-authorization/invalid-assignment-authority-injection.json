@@ -1,0 +1,34 @@
+{
+  "contractVersion": "v1",
+  "snapshotId": "assignment-snapshot-invalid-001",
+  "tenantId": "tenant-synthetic",
+  "version": 7,
+  "status": "complete",
+  "capturedAt": "2026-07-23T23:55:00Z",
+  "expiresAt": "2026-07-24T00:30:00Z",
+  "sourceRevision": "assignment-source-invalid-001",
+  "assignments": [
+    {
+      "assignmentId": "assignment-invalid-001",
+      "assignmentVersion": 1,
+      "state": "active",
+      "roleCode": "governance-admin",
+      "assignee": {
+        "kind": "subject",
+        "key": "user-synthetic-001"
+      },
+      "scope": {
+        "kind": "global",
+        "key": null
+      },
+      "validFrom": "2026-07-23T00:00:00Z",
+      "validUntil": null,
+      "issuedBy": {
+        "kind": "subject",
+        "key": "user-approver-001"
+      },
+      "reasonCode": "approved-access",
+      "permissions": ["global"]
+    }
+  ]
+}

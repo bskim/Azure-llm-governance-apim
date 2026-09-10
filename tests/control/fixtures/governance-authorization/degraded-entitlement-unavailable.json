@@ -1,0 +1,13 @@
+{
+  "contractVersion": "v1",
+  "snapshotId": "entitlement-snapshot-unavailable-001",
+  "tenantId": "tenant-synthetic",
+  "version": 12,
+  "status": "source-unavailable",
+  "capturedAt": "2026-07-23T23:55:00Z",
+  "expiresAt": "2026-07-24T00:30:00Z",
+  "sourceRevision": "entitlement-source-unavailable-001",
+  "reason": "control-plane-unavailable",
+  "teamCatalog": [],
+  "bindings": []
+}

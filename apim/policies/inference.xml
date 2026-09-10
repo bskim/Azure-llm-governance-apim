@@ -1,0 +1,1109 @@
+<policies>
+  <inbound>
+    <base />
+    <set-header name="x-request-id" exists-action="override">
+      <value>@(context.RequestId.ToString())</value>
+    </set-header>
+    <!-- A person signing in and a workload running unattended present different tokens: one
+         carries a delegated scope and a member-account claim, the other carries an application
+         role and neither. One validator cannot require both sets, so the branch is chosen from
+         an unverified read of the presented token and the chosen branch then validates it in
+         full. The read decides nothing on its own: whichever branch runs still checks signature,
+         issuer, tenant, audience and expiry, so the most a caller gains by steering themselves
+         into the workload branch is a stricter requirement they cannot satisfy. -->
+    <choose>
+      <when condition='@{
+          if (string.Equals("{{entra-workload-app-role}}", "disabled", StringComparison.Ordinal)) { return false; }
+          var presented = context.Request.Headers.GetValueOrDefault("Authorization", "").Split(&apos; &apos;).LastOrDefault() ?? string.Empty;
+          var unverified = presented.AsJwt();
+          return unverified != null &amp;&amp; unverified.Claims.ContainsKey("roles") &amp;&amp; !unverified.Claims.ContainsKey("scp");
+        }'>
+        <!-- The role assignment is the allowlist here. Entra issues this role only to a principal
+             an administrator assigned, so pinning a list of workload client IDs in the gateway as
+             well would be a second roster to keep in step with the first. -->
+        <validate-azure-ad-token id="entra-workload-token-validation" tenant-id="{{entra-tenant-id}}" header-name="Authorization" failed-validation-httpcode="401" failed-validation-error-message="Unauthorized. A valid gateway access token is required." output-token-variable-name="jwt">
+          <audiences>
+            <audience>{{entra-api-audience}}</audience>
+          </audiences>
+          <required-claims>
+            <claim name="roles" match="any">
+              <value>{{entra-workload-app-role}}</value>
+            </claim>
+          </required-claims>
+        </validate-azure-ad-token>
+        <set-variable name="authenticationFlow" value="application" />
+      </when>
+      <otherwise>
+        <!-- The developer client is listed so a local `az login` can reach the gateway. It is a
+             shared client used by everyone on the machine, so what it proves is the person, not
+             which tool they ran; the application catalogue records that as generic attribution
+             rather than naming a coding agent it cannot see. When the profile is not configured
+             the value is the nil GUID, which no client can present. -->
+        <validate-azure-ad-token id="entra-token-validation" tenant-id="{{entra-tenant-id}}" header-name="Authorization" failed-validation-httpcode="401" failed-validation-error-message="Unauthorized. A valid gateway access token is required." output-token-variable-name="jwt">
+          <client-application-ids>
+            <application-id>{{entra-client-application-id}}</application-id>
+            <application-id>{{entra-developer-client-application-id}}</application-id>
+          </client-application-ids>
+          <audiences>
+            <audience>{{entra-api-audience}}</audience>
+          </audiences>
+          <required-claims>
+            <claim name="azp" match="any">
+              <value>{{entra-client-application-id}}</value>
+              <value>{{entra-developer-client-application-id}}</value>
+            </claim>
+            <claim name="scp" match="any" separator=" ">
+              <value>{{entra-required-scope}}</value>
+            </claim>
+            <claim name="acct" match="all">
+              <value>0</value>
+            </claim>
+          </required-claims>
+        </validate-azure-ad-token>
+        <set-variable name="authenticationFlow" value="delegated" />
+      </otherwise>
+    </choose>
+    <!-- Read once, because the two token shapes name the calling application differently and
+         every later use — the cache key, the resolution request, the usage record — has to
+         name the same one. -->
+    <set-variable name="callerApplicationId" value='@{
+        var jwt = (Jwt)context.Variables["jwt"];
+        if (jwt.Claims.ContainsKey("azp")) { return jwt.Claims["azp"][0]; }
+        if (jwt.Claims.ContainsKey("appid")) { return jwt.Claims["appid"][0]; }
+        return string.Empty;
+      }' />
+    <choose>
+      <!-- Every limit, budget and usage record in this product is attributed to an application.
+           A caller whose token names none cannot be governed, and serving them would put
+           unattributable traffic into the same ledger the rest is counted in. -->
+      <when condition='@(string.IsNullOrEmpty((string)context.Variables["callerApplicationId"]))'>
+        <return-response>
+          <set-status code="403" reason="Forbidden" />
+          <set-header name="Content-Type" exists-action="override">
+            <value>application/json</value>
+          </set-header>
+          <set-header name="x-request-id" exists-action="override">
+            <value>@(context.RequestId.ToString())</value>
+          </set-header>
+          <set-body>{"error":{"message":"The access token does not name a calling application.","type":"permission_error","param":null,"code":"application_not_identifiable"}}</set-body>
+        </return-response>
+      </when>
+    </choose>
+    <set-variable name="bearerToken" value='@(context.Request.Headers.GetValueOrDefault("Authorization", "").Replace("Bearer ", string.Empty).Trim())' />
+    <choose>
+      <when condition='@(!string.Equals("{{c0-proxy-key}}", "disabled", StringComparison.Ordinal) &amp;&amp; !string.Equals(context.Request.Headers.GetValueOrDefault("x-c0-proxy-key", ""), "{{c0-proxy-key}}", StringComparison.Ordinal))'>
+        <return-response>
+          <set-status code="403" reason="Forbidden" />
+          <set-header name="Content-Type" exists-action="override">
+            <value>application/json</value>
+          </set-header>
+          <set-header name="x-request-id" exists-action="override">
+            <value>@(context.RequestId.ToString())</value>
+          </set-header>
+          <set-body>{"error":{"message":"C0 traffic must pass through the approved allowance proxy.","type":"permission_error","param":null,"code":"c0_proxy_required"}}</set-body>
+        </return-response>
+      </when>
+      <when condition='@(!string.Equals(context.Request.OriginalUrl.Host, "{{gateway-host}}", StringComparison.OrdinalIgnoreCase))'>
+        <return-response>
+          <set-status code="400" reason="Bad Request" />
+          <set-header name="Content-Type" exists-action="override">
+            <value>application/json</value>
+          </set-header>
+          <set-header name="x-request-id" exists-action="override">
+            <value>@(context.RequestId.ToString())</value>
+          </set-header>
+          <set-body>{"error":{"message":"The request host is not accepted by this gateway.","type":"invalid_request_error","param":null,"code":"host_not_allowed"}}</set-body>
+        </return-response>
+      </when>
+      <when condition='@(!((context.Operation.Id == "createResponse" &amp;&amp; context.Request.OriginalUrl.Path == "/v1/responses") || (context.Operation.Id == "createChatCompletion" &amp;&amp; context.Request.OriginalUrl.Path == "/v1/chat/completions")))'>
+        <return-response>
+          <set-status code="404" reason="Not Found" />
+          <set-header name="Content-Type" exists-action="override">
+            <value>application/json</value>
+          </set-header>
+          <set-header name="x-request-id" exists-action="override">
+            <value>@(context.RequestId.ToString())</value>
+          </set-header>
+          <set-body>{"error":{"message":"The requested operation is not available.","type":"invalid_request_error","param":null,"code":"operation_not_allowed"}}</set-body>
+        </return-response>
+      </when>
+      <when condition='@(!string.IsNullOrEmpty(context.Request.OriginalUrl.QueryString))'>
+        <return-response>
+          <set-status code="400" reason="Bad Request" />
+          <set-header name="Content-Type" exists-action="override">
+            <value>application/json</value>
+          </set-header>
+          <set-header name="x-request-id" exists-action="override">
+            <value>@(context.RequestId.ToString())</value>
+          </set-header>
+          <set-body>{"error":{"message":"Client query parameters are not accepted by this API.","type":"invalid_request_error","param":null,"code":"routing_input_not_allowed"}}</set-body>
+        </return-response>
+      </when>
+      <when condition='@(context.Request.Headers.ContainsKey("Ocp-Apim-Subscription-Key") || context.Request.Headers.ContainsKey("x-backend-url") || context.Request.Headers.ContainsKey("x-deployment-id") || context.Request.Headers.ContainsKey("X-HTTP-Method-Override") || context.Request.Headers.ContainsKey("X-Method-Override") || (context.Request.Headers.ContainsKey("api-key") &amp;&amp; !string.Equals(context.Request.Headers.GetValueOrDefault("api-key", ""), (string)context.Variables["bearerToken"], StringComparison.Ordinal)) || (context.Request.Headers.ContainsKey("x-api-key") &amp;&amp; !string.Equals(context.Request.Headers.GetValueOrDefault("x-api-key", ""), (string)context.Variables["bearerToken"], StringComparison.Ordinal)))'>
+        <return-response>
+          <set-status code="400" reason="Bad Request" />
+          <set-header name="Content-Type" exists-action="override">
+            <value>application/json</value>
+          </set-header>
+          <set-header name="x-request-id" exists-action="override">
+            <value>@(context.RequestId.ToString())</value>
+          </set-header>
+          <set-body>{"error":{"message":"Client credentials and routing headers are not accepted.","type":"invalid_request_error","param":null,"code":"routing_input_not_allowed"}}</set-body>
+        </return-response>
+      </when>
+      <when condition='@(!context.Request.Headers.GetValueOrDefault("Content-Type", "").ToLowerInvariant().StartsWith("application/json"))'>
+        <return-response>
+          <set-status code="400" reason="Bad Request" />
+          <set-header name="Content-Type" exists-action="override">
+            <value>application/json</value>
+          </set-header>
+          <set-header name="x-request-id" exists-action="override">
+            <value>@(context.RequestId.ToString())</value>
+          </set-header>
+          <set-body>{"error":{"message":"Content-Type must be application/json.","type":"invalid_request_error","param":null,"code":"invalid_content_type"}}</set-body>
+        </return-response>
+      </when>
+    </choose>
+    <set-header name="Forwarded" exists-action="delete" />
+    <set-header name="api-key" exists-action="delete" />
+    <set-header name="x-api-key" exists-action="delete" />
+    <set-header name="X-Forwarded-For" exists-action="delete" />
+    <set-header name="X-Forwarded-Host" exists-action="delete" />
+    <set-header name="X-Original-Host" exists-action="delete" />
+    <set-header name="X-Original-URL" exists-action="delete" />
+    <set-header name="X-Rewrite-URL" exists-action="delete" />
+    <set-header name="x-c0-proxy-key" exists-action="delete" />
+    <set-header name="x-c0-operation-id" exists-action="delete" />
+    <validate-content id="request-content-validation" unspecified-content-type-action="prevent" max-size="1048576" size-exceeded-action="prevent" errors-variable-name="requestBodyValidationErrors">
+      <content type="application/json" validate-as="json" action="prevent" allow-additional-properties="true" />
+    </validate-content>
+    <set-variable name="requestBody" value="@((JObject)context.Request.Body.As&lt;JObject&gt;(preserveContent: true))" />
+    <choose>
+      <when condition='@(((JObject)context.Variables["requestBody"])["model"] == null || string.IsNullOrWhiteSpace((string)((JObject)context.Variables["requestBody"])["model"]))'>
+        <return-response>
+          <set-status code="400" reason="Bad Request" />
+          <set-header name="Content-Type" exists-action="override">
+            <value>application/json</value>
+          </set-header>
+          <set-header name="x-request-id" exists-action="override">
+            <value>@(context.RequestId.ToString())</value>
+          </set-header>
+          <set-body>{"error":{"message":"The model field is required.","type":"invalid_request_error","param":"model","code":"missing_model"}}</set-body>
+        </return-response>
+      </when>
+      <when condition='@(((JObject)context.Variables["requestBody"])["deployment"] != null || ((JObject)context.Variables["requestBody"])["deployment_id"] != null || ((JObject)context.Variables["requestBody"])["backend"] != null || ((JObject)context.Variables["requestBody"])["backend_url"] != null || ((JObject)context.Variables["requestBody"])["api_version"] != null)'>
+        <return-response>
+          <set-status code="400" reason="Bad Request" />
+          <set-header name="Content-Type" exists-action="override">
+            <value>application/json</value>
+          </set-header>
+          <set-header name="x-request-id" exists-action="override">
+            <value>@(context.RequestId.ToString())</value>
+          </set-header>
+          <set-body>{"error":{"message":"Backend selection is controlled by the gateway.","type":"invalid_request_error","param":null,"code":"routing_input_not_allowed"}}</set-body>
+        </return-response>
+      </when>
+      <when condition='@(context.Operation.Id == "createResponse" &amp;&amp; ((JObject)context.Variables["requestBody"])["input"] == null)'>
+        <return-response>
+          <set-status code="400" reason="Bad Request" />
+          <set-header name="Content-Type" exists-action="override">
+            <value>application/json</value>
+          </set-header>
+          <set-header name="x-request-id" exists-action="override">
+            <value>@(context.RequestId.ToString())</value>
+          </set-header>
+          <set-body>{"error":{"message":"The input field is required.","type":"invalid_request_error","param":"input","code":"missing_input"}}</set-body>
+        </return-response>
+      </when>
+      <when condition='@(context.Operation.Id == "createChatCompletion" &amp;&amp; (((JObject)context.Variables["requestBody"])["messages"] == null || !((JObject)context.Variables["requestBody"])["messages"].HasValues))'>
+        <return-response>
+          <set-status code="400" reason="Bad Request" />
+          <set-header name="Content-Type" exists-action="override">
+            <value>application/json</value>
+          </set-header>
+          <set-header name="x-request-id" exists-action="override">
+            <value>@(context.RequestId.ToString())</value>
+          </set-header>
+          <set-body>{"error":{"message":"At least one message is required.","type":"invalid_request_error","param":"messages","code":"missing_messages"}}</set-body>
+        </return-response>
+      </when>
+    </choose>
+    <set-variable name="requestedModel" value='@((string)((JObject)context.Variables["requestBody"])["model"])' />
+    <set-variable name="streaming" value='@(((JObject)context.Variables["requestBody"])["stream"] != null &amp;&amp; (bool)((JObject)context.Variables["requestBody"])["stream"])' />
+    <set-variable name="usageQuality" value='@((bool)context.Variables["streaming"] ? "estimated" : "reported")' />
+    <set-variable name="apiFamily" value='@(context.Operation.Id == "createResponse" ? "openai-responses" : "openai-chat-completions")' />
+    <!-- Cache key is gateway-local: built from validated claims, never logged, never persisted.
+         The contract is part of the key because the fallback chain is compiled against it: a
+         target that answers Chat Completions is not a substitute on the Responses route. -->
+    <set-variable name="policyCacheKey" value='@("effective-policy|v2|" + ((Jwt)context.Variables["jwt"]).Subject + "|" + (string)context.Variables["callerApplicationId"] + "|" + (string)context.Variables["apiFamily"])' />
+    <cache-lookup-value key='@((string)context.Variables["policyCacheKey"])' variable-name="effectivePolicyRaw" caching-type="prefer-external" />
+    <choose>
+      <when condition='@(!context.Variables.ContainsKey("effectivePolicyRaw") &amp;&amp; string.Equals("{{governance-policy-enabled}}", "true", StringComparison.OrdinalIgnoreCase))'>
+        <send-request mode="new" response-variable-name="policyResponse" timeout="{{governance-policy-timeout-seconds}}" ignore-error="true">
+          <set-url>{{governance-policy-endpoint}}</set-url>
+          <set-method>POST</set-method>
+          <set-header name="Content-Type" exists-action="override">
+            <value>application/json</value>
+          </set-header>
+          <set-header name="x-request-id" exists-action="override">
+            <value>@(context.RequestId.ToString())</value>
+          </set-header>
+          <set-body>@{
+              var jwt = (Jwt)context.Variables["jwt"];
+              var body = new JObject(
+                new JProperty("tenantId", jwt.Claims.ContainsKey("tid") ? jwt.Claims["tid"][0] : "{{entra-tenant-id}}"),
+                new JProperty("subjectId", jwt.Subject),
+                new JProperty("applicationId", (string)context.Variables["callerApplicationId"]),
+                // Which of the two token shapes was validated. The control plane cannot tell a
+                // person from an unattended workload by the claims alone, and the two are
+                // governed differently, so the gateway states which validator accepted it.
+                new JProperty("authenticationFlow", (string)context.Variables["authenticationFlow"]),
+                new JProperty("apiFamily", (string)context.Variables["apiFamily"])
+              );
+              // Stated on every request, because an omitted claim and a caller in no
+              // assigned group look identical from here. Sending nothing would leave the
+              // control plane unable to tell a removal from an unconfigured gateway.
+              body.Add(new JProperty("groups", jwt.Claims.ContainsKey("groups") ? new JArray(jwt.Claims["groups"]) : new JArray()));
+              return body.ToString(Newtonsoft.Json.Formatting.None);
+            }</set-body>
+          <authentication-managed-identity id="governance-managed-identity" resource="{{governance-policy-audience}}" ignore-error="true" />
+        </send-request>
+        <choose>
+          <!-- A send-request that ignores errors still creates the response variable, but leaves it
+               null when the call never completed. Presence answers whether the gateway asked, not
+               whether it heard back, so an unreachable or slow control plane must be read from the
+               value rather than from the key. -->
+          <when condition='@(context.Variables.ContainsKey("policyResponse") &amp;&amp; context.Variables["policyResponse"] != null &amp;&amp; ((IResponse)context.Variables["policyResponse"]).StatusCode == 200)'>
+            <set-variable name="policyDocumentCandidate" value='@{
+                try
+                {
+                    var envelope = ((IResponse)context.Variables["policyResponse"]).Body.As&lt;JObject&gt;(preserveContent: true);
+                    var document = envelope?["document"] as JObject;
+                    var attribution = document?["attribution"] as JObject;
+                    var allowedModels = document?["allowedModels"] as JArray;
+                    var modelDeployments = document?["modelDeployments"] as JArray;
+                    var limits = document?["limits"] as JArray;
+                    if (document == null ||
+                        !string.Equals((string)document["contractVersion"], "v1", StringComparison.Ordinal) ||
+                        !string.Equals((string)document["documentType"], "effective-policy", StringComparison.Ordinal) ||
+                        !string.Equals((string)document["resolution"], "resolved", StringComparison.Ordinal) ||
+                        document["configVersion"] == null || document["configVersion"].Type != JTokenType.Integer || (int)document["configVersion"] &lt; 1 ||
+                        attribution == null ||
+                        string.IsNullOrWhiteSpace((string)attribution["subjectKey"]) ||
+                        string.IsNullOrWhiteSpace((string)attribution["applicationKey"]) ||
+                        allowedModels == null || !allowedModels.HasValues ||
+                        modelDeployments == null || !modelDeployments.HasValues ||
+                        limits == null || !limits.HasValues)
+                    {
+                        return "";
+                    }
+                    return document.ToString(Newtonsoft.Json.Formatting.None);
+                }
+                catch
+                {
+                    return "";
+                }
+              }' />
+            <choose>
+              <when condition='@(!string.IsNullOrEmpty((string)context.Variables["policyDocumentCandidate"]))'>
+                <set-variable name="effectivePolicyRaw" value='@((string)context.Variables["policyDocumentCandidate"])' />
+                <cache-store-value key='@((string)context.Variables["policyCacheKey"])' value='@((string)context.Variables["effectivePolicyRaw"])' duration="{{policy-cache-seconds}}" caching-type="prefer-external" />
+              </when>
+            </choose>
+          </when>
+          <!-- A refusal, and only when the body says so. This host also answers 403 when
+               the platform rejects the gateway's own token and when the gateway's
+               resolution role is missing; blocking on either would turn a control-plane
+               fault into an outage for every caller at once. -->
+          <when condition='@(context.Variables.ContainsKey("policyResponse") &amp;&amp; context.Variables["policyResponse"] != null &amp;&amp; ((IResponse)context.Variables["policyResponse"]).StatusCode == 403)'>
+            <set-variable name="admissionRefusal" value='@{
+                try
+                {
+                    var envelope = ((IResponse)context.Variables["policyResponse"]).Body.As&lt;JObject&gt;(preserveContent: true);
+                    if (envelope == null) { return ""; }
+                    if (envelope.Property("document") == null || envelope["document"].Type != JTokenType.Null) { return ""; }
+                    var reason = envelope["reasonCode"];
+                    if (reason == null || reason.Type != JTokenType.String) { return ""; }
+                    var code = (string)reason;
+                    return (code == "membership-evidence-unmapped" || code == "model-intersection-empty" || code == "principal-not-entitled") ? code : "";
+                }
+                catch
+                {
+                    return "";
+                }
+              }' />
+            <choose>
+              <when condition='@(!string.IsNullOrEmpty((string)context.Variables["admissionRefusal"]))'>
+                <trace source="llm-governance-admission" severity="information">
+                  <message>@("refused-request " + context.RequestId.ToString())</message>
+                  <metadata name="PolicyResolution" value="refused" />
+                  <metadata name="AdmissionRefusal" value='@((string)context.Variables["admissionRefusal"])' />
+                </trace>
+                <return-response>
+                  <set-status code="403" reason="Forbidden" />
+                  <set-header name="Content-Type" exists-action="override">
+                    <value>application/json</value>
+                  </set-header>
+                  <set-header name="x-request-id" exists-action="override">
+                    <value>@(context.RequestId.ToString())</value>
+                  </set-header>
+                  <set-header name="x-policy-resolution" exists-action="override">
+                    <value>refused</value>
+                  </set-header>
+                  <set-body>{"error":{"message":"This caller is not entitled to use the gateway.","type":"permission_error","param":null,"code":"caller_not_entitled"}}</set-body>
+                </return-response>
+              </when>
+            </choose>
+          </when>
+        </choose>
+      </when>
+    </choose>
+    <!-- A default policy is only retained for an isolated compatibility harness that
+         deliberately opts in. Every product deployment writes this named value as false. -->
+    <choose>
+      <when condition='@(!context.Variables.ContainsKey("effectivePolicyRaw") &amp;&amp; string.Equals("{{allow-ungoverned-evaluation-mode}}", "true", StringComparison.OrdinalIgnoreCase))'>
+        <set-variable name="effectivePolicyRaw" value="{{default-effective-policy}}" />
+      </when>
+      <when condition='@(!context.Variables.ContainsKey("effectivePolicyRaw"))'>
+        <trace source="llm-governance-admission" severity="information">
+          <message>@("unresolved-request " + context.RequestId.ToString())</message>
+          <metadata name="PolicyResolution" value="unavailable" />
+        </trace>
+        <return-response>
+          <set-status code="503" reason="Service Unavailable" />
+          <set-header name="Content-Type" exists-action="override">
+            <value>application/json</value>
+          </set-header>
+          <set-header name="x-request-id" exists-action="override">
+            <value>@(context.RequestId.ToString())</value>
+          </set-header>
+          <set-header name="x-policy-resolution" exists-action="override">
+            <value>unavailable</value>
+          </set-header>
+          <set-header name="Retry-After" exists-action="override">
+            <value>30</value>
+          </set-header>
+          <set-body>{"error":{"message":"Governance could not be resolved for this caller, so the request was not served. Retry after the interval given.","type":"gateway_error","param":null,"code":"governance_unavailable"}}</set-body>
+        </return-response>
+      </when>
+    </choose>
+    <set-variable name="effectivePolicy" value='@(JObject.Parse((string)context.Variables["effectivePolicyRaw"]))' />
+    <set-variable name="policyResolution" value='@((string)((JObject)context.Variables["effectivePolicy"])["resolution"])' />
+    <set-variable name="teamKey" value='@{
+        var team = ((JObject)context.Variables["effectivePolicy"])["attribution"]["teamKey"];
+        return team == null || team.Type == JTokenType.Null ? "" : (string)team;
+      }' />
+    <set-variable name="teamMetricKey" value='@(string.IsNullOrEmpty((string)context.Variables["teamKey"]) ? "not-single-team" : (string)context.Variables["teamKey"])' />
+    <set-variable name="subjectKey" value='@((string)((JObject)context.Variables["effectivePolicy"])["attribution"]["subjectKey"])' />
+    <set-variable name="applicationKey" value='@((string)((JObject)context.Variables["effectivePolicy"])["attribution"]["applicationKey"])' />
+    <!-- Admission attribution runs before every denial, so a refused request is still
+         attributable. Without it a refusal count could only ever be zero. -->
+    <trace source="llm-governance-admission" severity="information">
+      <message>@("admitted-request " + context.RequestId.ToString())</message>
+      <metadata name="SubjectKey" value='@((string)context.Variables["subjectKey"])' />
+      <metadata name="ApplicationKey" value='@((string)context.Variables["applicationKey"])' />
+      <metadata name="TeamKey" value='@((string)context.Variables["teamMetricKey"])' />
+      <metadata name="RequestedModel" value='@((string)context.Variables["requestedModel"])' />
+      <metadata name="PolicyResolution" value='@((string)context.Variables["policyResolution"])' />
+      <metadata name="ConfigVersion" value='@(((JObject)context.Variables["effectivePolicy"])["configVersion"].ToString())' />
+      <metadata name="UsageQuality" value='@((string)context.Variables["usageQuality"])' />
+    </trace>
+    <choose>
+      <when condition='@(!((JArray)((JObject)context.Variables["effectivePolicy"])["allowedModels"]).Values&lt;string&gt;().Contains((string)context.Variables["requestedModel"]))'>
+        <return-response>
+          <set-status code="403" reason="Forbidden" />
+          <set-header name="Content-Type" exists-action="override">
+            <value>application/json</value>
+          </set-header>
+          <set-header name="x-request-id" exists-action="override">
+            <value>@(context.RequestId.ToString())</value>
+          </set-header>
+          <set-body>@{
+              var allowed = new JArray(((JArray)((JObject)context.Variables["effectivePolicy"])["allowedModels"]).Values&lt;string&gt;());
+              return new JObject(new JProperty("error", new JObject(
+                new JProperty("message", "The requested model is not allowed."),
+                new JProperty("type", "permission_error"),
+                new JProperty("param", "model"),
+                new JProperty("code", "model_not_allowed"),
+                new JProperty("allowed_models", allowed)))).ToString(Newtonsoft.Json.Formatting.None);
+            }</set-body>
+        </return-response>
+      </when>
+    </choose>
+    <!-- Model-agnostic counters run before the fallback decision, so aggregate
+         consumption can never be attributed to the wrong model. -->
+    <set-variable name="quotaOrgAll" value='@{
+        var limits = (JArray)((JObject)context.Variables["effectivePolicy"])["limits"];
+        var limit = limits.FirstOrDefault(l =&gt; (string)l["scope"] == "organization" &amp;&amp; (string)l["modelScope"] == "all-models");
+        return limit == null || limit["tokenQuota"] == null ? 0L : Convert.ToInt64(limit["tokenQuota"]);
+      }' />
+    <set-variable name="quotaPeriodOrgAll" value='@{
+        var limits = (JArray)((JObject)context.Variables["effectivePolicy"])["limits"];
+        var limit = limits.FirstOrDefault(l =&gt; (string)l["scope"] == "organization" &amp;&amp; (string)l["modelScope"] == "all-models");
+        return limit == null ? "Monthly" : (string)limit["quotaPeriod"];
+      }' />
+    <set-variable name="quotaTeamAll" value='@{
+        var limits = (JArray)((JObject)context.Variables["effectivePolicy"])["limits"];
+        var limit = limits.FirstOrDefault(l =&gt; (string)l["scope"] == "team" &amp;&amp; (string)l["modelScope"] == "all-models");
+        return limit == null || limit["tokenQuota"] == null ? 0L : Convert.ToInt64(limit["tokenQuota"]);
+      }' />
+    <set-variable name="quotaPeriodTeamAll" value='@{
+        var limits = (JArray)((JObject)context.Variables["effectivePolicy"])["limits"];
+        var limit = limits.FirstOrDefault(l =&gt; (string)l["scope"] == "team" &amp;&amp; (string)l["modelScope"] == "all-models");
+        return limit == null || limit["quotaPeriod"] == null ? "Monthly" : (string)limit["quotaPeriod"];
+      }' />
+    <set-variable name="quotaSubjectAll" value='@{
+        var limits = (JArray)((JObject)context.Variables["effectivePolicy"])["limits"];
+        var limit = limits.FirstOrDefault(l =&gt; (string)l["scope"] == "subject" &amp;&amp; (string)l["modelScope"] == "all-models");
+        return limit == null || limit["tokenQuota"] == null ? 0L : Convert.ToInt64(limit["tokenQuota"]);
+      }' />
+    <set-variable name="quotaPeriodSubjectAll" value='@{
+        var limits = (JArray)((JObject)context.Variables["effectivePolicy"])["limits"];
+        var limit = limits.FirstOrDefault(l =&gt; (string)l["scope"] == "subject" &amp;&amp; (string)l["modelScope"] == "all-models");
+        return limit == null || limit["quotaPeriod"] == null ? "Monthly" : (string)limit["quotaPeriod"];
+      }' />
+    <set-variable name="quotaApplicationAll" value='@{
+        var limits = (JArray)((JObject)context.Variables["effectivePolicy"])["limits"];
+        var limit = limits.FirstOrDefault(l =&gt; (string)l["scope"] == "application" &amp;&amp; (string)l["modelScope"] == "all-models");
+        return limit == null || limit["tokenQuota"] == null ? 0L : Convert.ToInt64(limit["tokenQuota"]);
+      }' />
+    <set-variable name="quotaPeriodApplicationAll" value='@{
+        var limits = (JArray)((JObject)context.Variables["effectivePolicy"])["limits"];
+        var limit = limits.FirstOrDefault(l =&gt; (string)l["scope"] == "application" &amp;&amp; (string)l["modelScope"] == "all-models");
+        return limit == null || limit["quotaPeriod"] == null ? "Monthly" : (string)limit["quotaPeriod"];
+      }' />
+    <!-- Budget ids version the APIM counter.  An entitlement limit retains its stable
+         legacy key, while an authored budget cannot inherit consumption from another
+         budget that happens to govern the same principal and scope. -->
+    <set-variable name="quotaOrgAllBudgetSuffix" value='@{
+        var limit = ((JArray)((JObject)context.Variables["effectivePolicy"])["limits"]).FirstOrDefault(l =&gt; (string)l["scope"] == "organization" &amp;&amp; (string)l["modelScope"] == "all-models");
+        return limit == null || limit["budgetId"] == null ? "" : "|b:" + (string)limit["budgetId"] + ":v" + Convert.ToInt64(limit["budgetVersion"]).ToString();
+      }' />
+    <set-variable name="quotaTeamAllBudgetSuffix" value='@{
+        var limit = ((JArray)((JObject)context.Variables["effectivePolicy"])["limits"]).FirstOrDefault(l =&gt; (string)l["scope"] == "team" &amp;&amp; (string)l["modelScope"] == "all-models");
+        return limit == null || limit["budgetId"] == null ? "" : "|b:" + (string)limit["budgetId"] + ":v" + Convert.ToInt64(limit["budgetVersion"]).ToString();
+      }' />
+    <set-variable name="quotaSubjectAllBudgetSuffix" value='@{
+        var limit = ((JArray)((JObject)context.Variables["effectivePolicy"])["limits"]).FirstOrDefault(l =&gt; (string)l["scope"] == "subject" &amp;&amp; (string)l["modelScope"] == "all-models");
+        return limit == null || limit["budgetId"] == null ? "" : "|b:" + (string)limit["budgetId"] + ":v" + Convert.ToInt64(limit["budgetVersion"]).ToString();
+      }' />
+    <set-variable name="quotaApplicationAllBudgetSuffix" value='@{
+        var limit = ((JArray)((JObject)context.Variables["effectivePolicy"])["limits"]).FirstOrDefault(l =&gt; (string)l["scope"] == "application" &amp;&amp; (string)l["modelScope"] == "all-models");
+        return limit == null || limit["budgetId"] == null ? "" : "|b:" + (string)limit["budgetId"] + ":v" + Convert.ToInt64(limit["budgetVersion"]).ToString();
+      }' />
+    <!-- Request rates come from the resolved document, one counter per governed scope.
+         The `calls` attribute accepts a policy expression, so unlike the per-minute token
+         rate these do not have to be deployment-time literals. A scope the document does
+         not cap declares no counter rather than an unbounded one. -->
+    <set-variable name="rateOrgAll" value='@{
+        var limits = (JArray)((JObject)context.Variables["effectivePolicy"])["limits"];
+        var limit = limits.FirstOrDefault(l =&gt; (string)l["scope"] == "organization" &amp;&amp; (string)l["modelScope"] == "all-models");
+        return limit == null || limit["requestsPerMinute"] == null ? 0 : (int)limit["requestsPerMinute"];
+      }' />
+    <set-variable name="rateTeamAll" value='@{
+        var limits = (JArray)((JObject)context.Variables["effectivePolicy"])["limits"];
+        var limit = limits.FirstOrDefault(l =&gt; (string)l["scope"] == "team" &amp;&amp; (string)l["modelScope"] == "all-models");
+        return limit == null || limit["requestsPerMinute"] == null ? 0 : (int)limit["requestsPerMinute"];
+      }' />
+    <set-variable name="rateSubjectAll" value='@{
+        var limits = (JArray)((JObject)context.Variables["effectivePolicy"])["limits"];
+        var limit = limits.FirstOrDefault(l =&gt; (string)l["scope"] == "subject" &amp;&amp; (string)l["modelScope"] == "all-models");
+        return limit == null || limit["requestsPerMinute"] == null ? 0 : (int)limit["requestsPerMinute"];
+      }' />
+    <set-variable name="rateApplicationAll" value='@{
+        var limits = (JArray)((JObject)context.Variables["effectivePolicy"])["limits"];
+        var limit = limits.FirstOrDefault(l =&gt; (string)l["scope"] == "application" &amp;&amp; (string)l["modelScope"] == "all-models");
+        return limit == null || limit["requestsPerMinute"] == null ? 0 : (int)limit["requestsPerMinute"];
+      }' />
+    <rate-limit-by-key id="subject-request-limit" calls="{{requests-per-minute}}" renewal-period="60" counter-key='@("user:" + (string)context.Variables["subjectKey"])' remaining-calls-header-name="x-ratelimit-remaining-requests" />
+    <!-- Distinct counter keys, because one key is one counter across every scope it is
+         configured at. Sharing a key would merge the organization and the caller into a
+         single budget instead of applying both. -->
+    <choose>
+      <when condition='@((int)context.Variables["rateOrgAll"] &gt; 0)'>
+        <rate-limit-by-key id="organization-request-limit" calls='@(Convert.ToInt32(context.Variables["rateOrgAll"]))' renewal-period="60" counter-key="rpm:org" />
+      </when>
+    </choose>
+    <choose>
+      <when condition='@(!string.IsNullOrEmpty((string)context.Variables["teamKey"]) &amp;&amp; (int)context.Variables["rateTeamAll"] &gt; 0)'>
+        <rate-limit-by-key id="team-request-limit" calls='@(Convert.ToInt32(context.Variables["rateTeamAll"]))' renewal-period="60" counter-key='@("rpm:team:" + (string)context.Variables["teamKey"])' />
+      </when>
+    </choose>
+    <choose>
+      <when condition='@((int)context.Variables["rateSubjectAll"] &gt; 0)'>
+        <rate-limit-by-key id="subject-configured-request-limit" calls='@(Convert.ToInt32(context.Variables["rateSubjectAll"]))' renewal-period="60" counter-key='@("rpm:user:" + (string)context.Variables["subjectKey"])' />
+      </when>
+    </choose>
+    <choose>
+      <when condition='@((int)context.Variables["rateApplicationAll"] &gt; 0)'>
+        <rate-limit-by-key id="application-request-limit" calls='@(Convert.ToInt32(context.Variables["rateApplicationAll"]))' renewal-period="60" counter-key='@("rpm:app:" + (string)context.Variables["applicationKey"])' />
+      </when>
+    </choose>
+    <!-- The two axes are separate policies because API Management reports the same error
+         source and reason for both, so the only way to tell an exhausted budget from a
+         momentary rate breach is which policy set its retry variable. Distinct counter
+         keys are required: the same key with different tokens-per-minute values across
+         instances is documented as unpredictable on the v2 tiers. Quota runs first so a
+         breach that cannot recover this period is never reported as a transient one. -->
+    <llm-token-limit id="organization-token-quota" counter-key='@("org|quota" + (string)context.Variables["quotaOrgAllBudgetSuffix"])' token-quota='@(Convert.ToInt64(context.Variables["quotaOrgAll"]))' token-quota-period='@((string)context.Variables["quotaPeriodOrgAll"])' estimate-prompt-tokens="true" remaining-quota-tokens-variable-name="remainingOrganizationTokens" retry-after-variable-name="quotaRetryAfter" />
+    <llm-token-limit id="organization-token-rate" counter-key="org|rate" tokens-per-minute="{{organization-tokens-per-minute}}" estimate-prompt-tokens="true" remaining-tokens-header-name="x-ratelimit-remaining-tokens" tokens-consumed-variable-name="consumedTokens" retry-after-variable-name="rateRetryAfter" />
+    <choose>
+      <when condition='@(!string.IsNullOrEmpty((string)context.Variables["teamKey"]) &amp;&amp; Convert.ToInt64(context.Variables["quotaTeamAll"]) &gt; 0)'>
+        <llm-token-limit id="team-token-limit" counter-key='@("team:" + (string)context.Variables["teamKey"] + (string)context.Variables["quotaTeamAllBudgetSuffix"])' token-quota='@(Convert.ToInt64(context.Variables["quotaTeamAll"]))' token-quota-period='@((string)context.Variables["quotaPeriodTeamAll"])' estimate-prompt-tokens="true" remaining-quota-tokens-variable-name="remainingTeamTokens" retry-after-variable-name="quotaRetryAfter" />
+      </when>
+    </choose>
+    <choose>
+      <when condition='@(Convert.ToInt64(context.Variables["quotaSubjectAll"]) &gt; 0)'>
+        <llm-token-limit id="subject-token-limit" counter-key='@("user:" + (string)context.Variables["subjectKey"] + (string)context.Variables["quotaSubjectAllBudgetSuffix"])' token-quota='@(Convert.ToInt64(context.Variables["quotaSubjectAll"]))' token-quota-period='@((string)context.Variables["quotaPeriodSubjectAll"])' estimate-prompt-tokens="true" remaining-quota-tokens-variable-name="remainingSubjectTokens" retry-after-variable-name="quotaRetryAfter" />
+      </when>
+    </choose>
+    <choose>
+      <when condition='@(Convert.ToInt64(context.Variables["quotaApplicationAll"]) &gt; 0)'>
+        <llm-token-limit id="application-token-limit" counter-key='@("app:" + (string)context.Variables["applicationKey"] + (string)context.Variables["quotaApplicationAllBudgetSuffix"])' token-quota='@(Convert.ToInt64(context.Variables["quotaApplicationAll"]))' token-quota-period='@((string)context.Variables["quotaPeriodApplicationAll"])' estimate-prompt-tokens="true" remaining-quota-tokens-variable-name="remainingApplicationTokens" retry-after-variable-name="quotaRetryAfter" />
+      </when>
+    </choose>
+    <!-- Fallback applies only when enabled, only to a caller that declared it accepts a
+         substitute, only past the configured threshold, and only to a target already
+         inside the caller's allowlist. -->
+    <set-variable name="effectiveModel" value='@{
+        var policy = (JObject)context.Variables["effectivePolicy"];
+        var requested = (string)context.Variables["requestedModel"];
+        var fallback = (JObject)policy["fallback"];
+        if (fallback == null || !(bool)fallback["enabled"]) { return requested; }
+
+        var intent = policy["modelSelectionIntent"] == null ? "pinned" : (string)policy["modelSelectionIntent"];
+        if (intent != "preferred") { return requested; }
+
+        var threshold = policy["warnThresholdPercent"] == null ? 0 : (int)policy["warnThresholdPercent"];
+        if (threshold &lt;= 0) { return requested; }
+
+        var limits = (JArray)policy["limits"];
+        var scopes = new [] { "organization", "team", "subject", "application" };
+        var names = new [] { "remainingOrganizationTokens", "remainingTeamTokens", "remainingSubjectTokens", "remainingApplicationTokens" };
+        var breached = false;
+        for (var i = 0; i &lt; scopes.Length; i++)
+        {
+          if (!context.Variables.ContainsKey(names[i])) { continue; }
+          var scope = scopes[i];
+          var limit = limits.FirstOrDefault(l =&gt; (string)l["scope"] == scope &amp;&amp; (string)l["modelScope"] == "all-models");
+          if (limit == null) { continue; }
+          var quota = Convert.ToInt64(limit["tokenQuota"]);
+          if (quota &lt;= 0) { continue; }
+          var remaining = Convert.ToInt64(context.Variables[names[i]]);
+          if (((decimal)(quota - remaining) / (decimal)quota) * 100m &gt;= threshold) { breached = true; }
+        }
+        // A model-scoped budget cannot be read from a counter here: the per-model counter
+        // runs after this decision. The resolver carries the share it has already burned.
+        var pressure = (JArray)policy["modelPressure"];
+        if (pressure != null)
+        {
+          var entry = pressure.FirstOrDefault(p =&gt; (string)p["model"] == requested);
+          if (entry != null &amp;&amp; (int)entry["consumedBasisPoints"] &gt;= threshold * 100) { breached = true; }
+        }
+        if (!breached) { return requested; }
+
+        var allowed = ((JArray)policy["allowedModels"]).Values&lt;string&gt;().ToList();
+        var chain = (JArray)fallback["chain"];
+        var maxDepth = (int)fallback["maxDepth"];
+        var current = requested;
+        for (var depth = 0; depth &lt; maxDepth; depth++)
+        {
+          var step = current;
+          var edge = chain.FirstOrDefault(e =&gt; (string)e["from"] == step);
+          if (edge == null) { break; }
+          var next = (string)edge["to"];
+          if (!allowed.Contains(next)) { break; }
+          current = next;
+        }
+        return current;
+      }' />
+    <set-variable name="fallbackApplied" value='@(!string.Equals((string)context.Variables["effectiveModel"], (string)context.Variables["requestedModel"], StringComparison.Ordinal))' />
+    <set-variable name="providerDeploymentName" value='@{
+        var policy = (JObject)context.Variables["effectivePolicy"];
+        var effective = (string)context.Variables["effectiveModel"];
+        if (string.Equals((string)policy["resolution"], "default", StringComparison.Ordinal)) { return effective; }
+        var deployments = policy["modelDeployments"] as JArray;
+        if (deployments == null) { return ""; }
+        var mapping = deployments.FirstOrDefault(entry =&gt; (string)entry["modelKey"] == effective);
+        return mapping == null || mapping["providerDeploymentName"] == null ? "" : (string)mapping["providerDeploymentName"];
+      }' />
+    <choose>
+      <when condition='@(string.IsNullOrEmpty((string)context.Variables["providerDeploymentName"]))'>
+        <trace source="llm-governance-admission" severity="information">
+          <message>@("unmapped-model-request " + context.RequestId.ToString())</message>
+          <metadata name="PolicyResolution" value="unavailable" />
+        </trace>
+        <return-response>
+          <set-status code="503" reason="Service Unavailable" />
+          <set-header name="Content-Type" exists-action="override">
+            <value>application/json</value>
+          </set-header>
+          <set-header name="x-request-id" exists-action="override">
+            <value>@(context.RequestId.ToString())</value>
+          </set-header>
+          <set-header name="x-policy-resolution" exists-action="override">
+            <value>unavailable</value>
+          </set-header>
+          <set-header name="Retry-After" exists-action="override">
+            <value>30</value>
+          </set-header>
+          <set-body>{"error":{"message":"Governance could not map the selected model to a provider deployment, so the request was not served.","type":"gateway_error","param":null,"code":"governance_unavailable"}}</set-body>
+        </return-response>
+      </when>
+    </choose>
+    <set-variable name="substitutionNotice" value='@{
+        var policy = (JObject)context.Variables["effectivePolicy"];
+        return policy["substitutionNotice"] == null ? "header" : (string)policy["substitutionNotice"];
+      }' />
+    <!-- A throttle has to observe its own budget.  These counters use an effectively
+         unbounded quota only as an APIM token meter; the tier below compares its consumed
+         amount with the authored quota, so THROTTLE itself never becomes a hard denial. -->
+    <set-variable name="throttleMeasurementQuota" value="9223372036854775807" />
+    <set-variable name="throttleOrganizationAllBudget" value='@{
+        var tiers = ((JObject)context.Variables["effectivePolicy"])["throttleTiers"] as JArray;
+        return tiers == null ? null : tiers.FirstOrDefault(t =&gt; (string)t["scope"] == "organization" &amp;&amp; (string)t["modelScope"] == "all-models");
+      }' />
+    <set-variable name="throttleTeamAllBudget" value='@{
+        var tiers = ((JObject)context.Variables["effectivePolicy"])["throttleTiers"] as JArray;
+        return tiers == null ? null : tiers.FirstOrDefault(t =&gt; (string)t["scope"] == "team" &amp;&amp; (string)t["modelScope"] == "all-models");
+      }' />
+    <set-variable name="throttleSubjectAllBudget" value='@{
+        var tiers = ((JObject)context.Variables["effectivePolicy"])["throttleTiers"] as JArray;
+        return tiers == null ? null : tiers.FirstOrDefault(t =&gt; (string)t["scope"] == "subject" &amp;&amp; (string)t["modelScope"] == "all-models");
+      }' />
+    <set-variable name="throttleApplicationAllBudget" value='@{
+        var tiers = ((JObject)context.Variables["effectivePolicy"])["throttleTiers"] as JArray;
+        return tiers == null ? null : tiers.FirstOrDefault(t =&gt; (string)t["scope"] == "application" &amp;&amp; (string)t["modelScope"] == "all-models");
+      }' />
+    <set-variable name="throttleOrganizationModelBudget" value='@{
+        var model = (string)context.Variables["effectiveModel"];
+        var tiers = ((JObject)context.Variables["effectivePolicy"])["throttleTiers"] as JArray;
+        return tiers == null ? null : tiers.FirstOrDefault(t =&gt; (string)t["scope"] == "organization" &amp;&amp; (string)t["modelScope"] == "per-model" &amp;&amp; (string)t["modelKey"] == model);
+      }' />
+    <set-variable name="throttleTeamModelBudget" value='@{
+        var model = (string)context.Variables["effectiveModel"];
+        var tiers = ((JObject)context.Variables["effectivePolicy"])["throttleTiers"] as JArray;
+        return tiers == null ? null : tiers.FirstOrDefault(t =&gt; (string)t["scope"] == "team" &amp;&amp; (string)t["modelScope"] == "per-model" &amp;&amp; (string)t["modelKey"] == model);
+      }' />
+    <choose>
+      <when condition='@(context.Variables["throttleOrganizationAllBudget"] != null)'>
+        <llm-token-limit id="throttle-organization-all-models-measurement" counter-key='@{
+            var tier = (JObject)context.Variables["throttleOrganizationAllBudget"];
+            return "throttle:org:all:b:" + (string)tier["budgetId"] + ":v" + Convert.ToInt64(tier["budgetVersion"]).ToString();
+          }' token-quota='@(Convert.ToInt64(context.Variables["throttleMeasurementQuota"]))' token-quota-period='@((string)((JObject)context.Variables["throttleOrganizationAllBudget"])["quotaPeriod"])' estimate-prompt-tokens="true" remaining-quota-tokens-variable-name="remainingThrottleOrganizationAllTokens" />
+      </when>
+    </choose>
+    <choose>
+      <when condition='@(!string.IsNullOrEmpty((string)context.Variables["teamKey"]) &amp;&amp; context.Variables["throttleTeamAllBudget"] != null)'>
+        <llm-token-limit id="throttle-team-all-models-measurement" counter-key='@{
+            var tier = (JObject)context.Variables["throttleTeamAllBudget"];
+            return "throttle:team:" + (string)context.Variables["teamKey"] + ":all:b:" + (string)tier["budgetId"] + ":v" + Convert.ToInt64(tier["budgetVersion"]).ToString();
+          }' token-quota='@(Convert.ToInt64(context.Variables["throttleMeasurementQuota"]))' token-quota-period='@((string)((JObject)context.Variables["throttleTeamAllBudget"])["quotaPeriod"])' estimate-prompt-tokens="true" remaining-quota-tokens-variable-name="remainingThrottleTeamAllTokens" />
+      </when>
+    </choose>
+    <choose>
+      <when condition='@(context.Variables["throttleSubjectAllBudget"] != null)'>
+        <llm-token-limit id="throttle-subject-all-models-measurement" counter-key='@{
+            var tier = (JObject)context.Variables["throttleSubjectAllBudget"];
+            return "throttle:subject:" + (string)context.Variables["subjectKey"] + ":all:b:" + (string)tier["budgetId"] + ":v" + Convert.ToInt64(tier["budgetVersion"]).ToString();
+          }' token-quota='@(Convert.ToInt64(context.Variables["throttleMeasurementQuota"]))' token-quota-period='@((string)((JObject)context.Variables["throttleSubjectAllBudget"])["quotaPeriod"])' estimate-prompt-tokens="true" remaining-quota-tokens-variable-name="remainingThrottleSubjectAllTokens" />
+      </when>
+    </choose>
+    <choose>
+      <when condition='@(context.Variables["throttleApplicationAllBudget"] != null)'>
+        <llm-token-limit id="throttle-application-all-models-measurement" counter-key='@{
+            var tier = (JObject)context.Variables["throttleApplicationAllBudget"];
+            return "throttle:application:" + (string)context.Variables["applicationKey"] + ":all:b:" + (string)tier["budgetId"] + ":v" + Convert.ToInt64(tier["budgetVersion"]).ToString();
+          }' token-quota='@(Convert.ToInt64(context.Variables["throttleMeasurementQuota"]))' token-quota-period='@((string)((JObject)context.Variables["throttleApplicationAllBudget"])["quotaPeriod"])' estimate-prompt-tokens="true" remaining-quota-tokens-variable-name="remainingThrottleApplicationAllTokens" />
+      </when>
+    </choose>
+    <choose>
+      <when condition='@(context.Variables["throttleOrganizationModelBudget"] != null)'>
+        <llm-token-limit id="throttle-organization-per-model-measurement" counter-key='@{
+            var tier = (JObject)context.Variables["throttleOrganizationModelBudget"];
+            return "throttle:org:model:" + (string)context.Variables["effectiveModel"] + ":b:" + (string)tier["budgetId"] + ":v" + Convert.ToInt64(tier["budgetVersion"]).ToString();
+          }' token-quota='@(Convert.ToInt64(context.Variables["throttleMeasurementQuota"]))' token-quota-period='@((string)((JObject)context.Variables["throttleOrganizationModelBudget"])["quotaPeriod"])' estimate-prompt-tokens="true" remaining-quota-tokens-variable-name="remainingThrottleOrganizationModelTokens" />
+      </when>
+    </choose>
+    <choose>
+      <when condition='@(!string.IsNullOrEmpty((string)context.Variables["teamKey"]) &amp;&amp; context.Variables["throttleTeamModelBudget"] != null)'>
+        <llm-token-limit id="throttle-team-per-model-measurement" counter-key='@{
+            var tier = (JObject)context.Variables["throttleTeamModelBudget"];
+            return "throttle:team:" + (string)context.Variables["teamKey"] + ":model:" + (string)context.Variables["effectiveModel"] + ":b:" + (string)tier["budgetId"] + ":v" + Convert.ToInt64(tier["budgetVersion"]).ToString();
+          }' token-quota='@(Convert.ToInt64(context.Variables["throttleMeasurementQuota"]))' token-quota-period='@((string)((JObject)context.Variables["throttleTeamModelBudget"])["quotaPeriod"])' estimate-prompt-tokens="true" remaining-quota-tokens-variable-name="remainingThrottleTeamModelTokens" />
+      </when>
+    </choose>
+    <!-- The tier is selected here and its rate is a literal, because the rate attributes
+         do not yet accept an expression. Each tier keeps its own counter key so no key is
+         ever declared with two different rates. -->
+    <set-variable name="throttleTier" value='@{
+        var policy = (JObject)context.Variables["effectivePolicy"];
+        var tiers = policy["throttleTiers"] as JArray;
+        if (tiers == null || tiers.Count == 0) { return ""; }
+
+        var names = new [] {
+          "remainingThrottleOrganizationAllTokens",
+          "remainingThrottleTeamAllTokens",
+          "remainingThrottleSubjectAllTokens",
+          "remainingThrottleApplicationAllTokens",
+          "remainingThrottleOrganizationModelTokens",
+          "remainingThrottleTeamModelTokens",
+        };
+        var selected = "";
+        var selectedSeverity = 0;
+        foreach (var tier in tiers)
+        {
+          if ((string)tier["accountingBasis"] != "apim-estimated-total-tokens") { continue; }
+          var name = "";
+          var scope = (string)tier["scope"];
+          var modelScope = (string)tier["modelScope"];
+          if (scope == "organization" &amp;&amp; modelScope == "all-models") { name = names[0]; }
+          else if (scope == "team" &amp;&amp; modelScope == "all-models") { name = names[1]; }
+          else if (scope == "subject" &amp;&amp; modelScope == "all-models") { name = names[2]; }
+          else if (scope == "application" &amp;&amp; modelScope == "all-models") { name = names[3]; }
+          else if (scope == "organization" &amp;&amp; modelScope == "per-model" &amp;&amp; (string)tier["modelKey"] == (string)context.Variables["effectiveModel"]) { name = names[4]; }
+          else if (scope == "team" &amp;&amp; modelScope == "per-model" &amp;&amp; (string)tier["modelKey"] == (string)context.Variables["effectiveModel"]) { name = names[5]; }
+          if (string.IsNullOrEmpty(name) || !context.Variables.ContainsKey(name)) { continue; }
+          var quota = Convert.ToInt64(tier["againstTokenQuota"]);
+          if (quota &lt;= 0) { continue; }
+          var used = Convert.ToInt64(context.Variables["throttleMeasurementQuota"]) - Convert.ToInt64(context.Variables[name]);
+          var consumedBasisPoints = ((decimal)used / (decimal)quota) * 10000m;
+          var at = Convert.ToInt64(tier["atBasisPoints"]);
+          var tierCode = (string)tier["tierCode"];
+          var severity = tierCode == "tier-minimal" ? 2 : tierCode == "tier-reduced" ? 1 : 0;
+          if (severity == 0) { continue; }
+          if (consumedBasisPoints &gt;= at &amp;&amp; severity &gt; selectedSeverity) { selectedSeverity = severity; selected = tierCode; }
+        }
+        return selected;
+      }' />
+    <choose>
+      <when condition='@(string.Equals((string)context.Variables["throttleTier"], "tier-reduced", StringComparison.Ordinal))'>
+        <rate-limit-by-key id="throttle-tier-reduced" calls="{{throttle-tier-reduced-calls}}" renewal-period="60" counter-key='@("throttle:reduced:" + (string)context.Variables["subjectKey"])' />
+      </when>
+      <when condition='@(string.Equals((string)context.Variables["throttleTier"], "tier-minimal", StringComparison.Ordinal))'>
+        <rate-limit-by-key id="throttle-tier-minimal" calls="{{throttle-tier-minimal-calls}}" renewal-period="60" counter-key='@("throttle:minimal:" + (string)context.Variables["subjectKey"])' />
+      </when>
+    </choose>
+    <set-body>@{
+        var body = (JObject)context.Variables["requestBody"];
+        body["model"] = (string)context.Variables["providerDeploymentName"];
+        if (context.Operation.Id == "createChatCompletion" &amp;&amp; body["stream"] != null &amp;&amp; (bool)body["stream"])
+        {
+          var streamOptions = body["stream_options"] as JObject ?? new JObject();
+          streamOptions["include_usage"] = true;
+          body["stream_options"] = streamOptions;
+        }
+        return body.ToString(Newtonsoft.Json.Formatting.None);
+      }</set-body>
+    <!-- Model-specific counters run after the fallback decision, so they are always
+         charged against the model that actually serves the request. -->
+    <set-variable name="quotaOrgModel" value='@{
+        var limits = (JArray)((JObject)context.Variables["effectivePolicy"])["limits"];
+        var limit = limits.FirstOrDefault(l =&gt; (string)l["scope"] == "organization" &amp;&amp; (string)l["modelScope"] == "per-model" &amp;&amp; (l["modelKey"] == null || (string)l["modelKey"] == (string)context.Variables["effectiveModel"]));
+        return limit == null || limit["tokenQuota"] == null ? 0L : Convert.ToInt64(limit["tokenQuota"]);
+      }' />
+    <set-variable name="quotaPeriodOrgModel" value='@{
+        var limits = (JArray)((JObject)context.Variables["effectivePolicy"])["limits"];
+        var limit = limits.FirstOrDefault(l =&gt; (string)l["scope"] == "organization" &amp;&amp; (string)l["modelScope"] == "per-model" &amp;&amp; (l["modelKey"] == null || (string)l["modelKey"] == (string)context.Variables["effectiveModel"]));
+        return limit == null || limit["quotaPeriod"] == null ? "Monthly" : (string)limit["quotaPeriod"];
+      }' />
+    <set-variable name="quotaTeamModel" value='@{
+        var limits = (JArray)((JObject)context.Variables["effectivePolicy"])["limits"];
+        var limit = limits.FirstOrDefault(l =&gt; (string)l["scope"] == "team" &amp;&amp; (string)l["modelScope"] == "per-model" &amp;&amp; (l["modelKey"] == null || (string)l["modelKey"] == (string)context.Variables["effectiveModel"]));
+        return limit == null || limit["tokenQuota"] == null ? 0L : Convert.ToInt64(limit["tokenQuota"]);
+      }' />
+    <set-variable name="quotaPeriodTeamModel" value='@{
+        var limits = (JArray)((JObject)context.Variables["effectivePolicy"])["limits"];
+        var limit = limits.FirstOrDefault(l =&gt; (string)l["scope"] == "team" &amp;&amp; (string)l["modelScope"] == "per-model" &amp;&amp; (l["modelKey"] == null || (string)l["modelKey"] == (string)context.Variables["effectiveModel"]));
+        return limit == null || limit["quotaPeriod"] == null ? "Monthly" : (string)limit["quotaPeriod"];
+      }' />
+    <set-variable name="quotaOrgModelBudgetSuffix" value='@{
+        var model = (string)context.Variables["effectiveModel"];
+        var limit = ((JArray)((JObject)context.Variables["effectivePolicy"])["limits"]).FirstOrDefault(l =&gt; (string)l["scope"] == "organization" &amp;&amp; (string)l["modelScope"] == "per-model" &amp;&amp; (string)l["modelKey"] == model);
+        return limit == null || limit["budgetId"] == null ? "" : "|b:" + (string)limit["budgetId"] + ":v" + Convert.ToInt64(limit["budgetVersion"]).ToString();
+      }' />
+    <set-variable name="quotaTeamModelBudgetSuffix" value='@{
+        var model = (string)context.Variables["effectiveModel"];
+        var limit = ((JArray)((JObject)context.Variables["effectivePolicy"])["limits"]).FirstOrDefault(l =&gt; (string)l["scope"] == "team" &amp;&amp; (string)l["modelScope"] == "per-model" &amp;&amp; (string)l["modelKey"] == model);
+        return limit == null || limit["budgetId"] == null ? "" : "|b:" + (string)limit["budgetId"] + ":v" + Convert.ToInt64(limit["budgetVersion"]).ToString();
+      }' />
+    <choose>
+      <when condition='@(Convert.ToInt64(context.Variables["quotaOrgModel"]) &gt; 0)'>
+        <llm-token-limit id="organization-model-token-limit" counter-key='@("org|m:" + (string)context.Variables["effectiveModel"] + (string)context.Variables["quotaOrgModelBudgetSuffix"])' token-quota='@(Convert.ToInt64(context.Variables["quotaOrgModel"]))' token-quota-period='@((string)context.Variables["quotaPeriodOrgModel"])' estimate-prompt-tokens="true" retry-after-variable-name="quotaRetryAfter" />
+      </when>
+    </choose>
+    <choose>
+      <when condition='@(!string.IsNullOrEmpty((string)context.Variables["teamKey"]) &amp;&amp; Convert.ToInt64(context.Variables["quotaTeamModel"]) &gt; 0)'>
+        <llm-token-limit id="team-model-token-limit" counter-key='@("team:" + (string)context.Variables["teamKey"] + "|m:" + (string)context.Variables["effectiveModel"] + (string)context.Variables["quotaTeamModelBudgetSuffix"])' token-quota='@(Convert.ToInt64(context.Variables["quotaTeamModel"]))' token-quota-period='@((string)context.Variables["quotaPeriodTeamModel"])' estimate-prompt-tokens="true" retry-after-variable-name="quotaRetryAfter" />
+      </when>
+    </choose>
+    <!-- Dispatch attribution: adds the model decision the admission record cannot know.
+         Pseudonymous subject and application, canonical team, no body. -->
+    <trace source="llm-governance-dispatch" severity="information">
+      <message>@("dispatched-request " + context.RequestId.ToString())</message>
+      <metadata name="SubjectKey" value='@((string)context.Variables["subjectKey"])' />
+      <metadata name="ApplicationKey" value='@((string)context.Variables["applicationKey"])' />
+      <metadata name="TeamKey" value='@((string)context.Variables["teamMetricKey"])' />
+      <metadata name="RequestedModel" value='@((string)context.Variables["requestedModel"])' />
+      <metadata name="EffectiveModel" value='@((string)context.Variables["effectiveModel"])' />
+      <metadata name="FallbackApplied" value='@(((bool)context.Variables["fallbackApplied"]).ToString())' />
+      <metadata name="PolicyResolution" value='@((string)context.Variables["policyResolution"])' />
+      <metadata name="ConfigVersion" value='@(((JObject)context.Variables["effectivePolicy"])["configVersion"].ToString())' />
+      <metadata name="UsageQuality" value='@((string)context.Variables["usageQuality"])' />
+    </trace>
+    <llm-emit-token-metric namespace="LLMGateway">
+      <dimension name="Operation ID" />
+      <dimension name="Team" value='@((string)context.Variables["teamMetricKey"])' />
+      <dimension name="Effective Model" value='@((string)context.Variables["effectiveModel"])' />
+      <dimension name="Policy Resolution" value='@((string)context.Variables["policyResolution"])' />
+      <dimension name="Usage Quality" value='@((string)context.Variables["usageQuality"])' />
+    </llm-emit-token-metric>
+    <!-- The pool is entered only for a model every member deploys. Balancing a request across
+         members that do not all serve it would route it to one that cannot answer, so the
+         model that will actually be dispatched decides, not the one the caller asked for. -->
+    <choose>
+      <when condition='@{
+          var pooled = "{{pooled-model-deployments}}";
+          if (string.IsNullOrWhiteSpace(pooled)) { return false; }
+          var dispatched = (string)context.Variables["effectiveModel"];
+          return pooled.Split(&apos;,&apos;).Any(entry =&gt; entry.Trim().Length &gt; 0 &amp;&amp; string.Equals(entry.Trim(), dispatched, StringComparison.Ordinal));
+        }'>
+        <set-backend-service backend-id="foundry-account-pool" />
+      </when>
+      <otherwise>
+        <set-backend-service backend-id="foundry-account-openai-v1" />
+      </otherwise>
+    </choose>
+    <rewrite-uri template='@(context.Operation.Id == "createResponse" ? "/responses" : "/chat/completions")' copy-unmatched-params="false" />
+    <authentication-managed-identity id="foundry-managed-identity" resource="https://cognitiveservices.azure.com" ignore-error="false" />
+  </inbound>
+  <backend>
+    <forward-request id="foundry-forward" timeout="120" buffer-request-body="true" buffer-response="false" />
+  </backend>
+  <outbound>
+    <base />
+    <set-header name="x-request-id" exists-action="override">
+      <value>@(context.RequestId.ToString())</value>
+    </set-header>
+    <set-header name="x-requested-model" exists-action="override">
+      <value>@((string)context.Variables["requestedModel"])</value>
+    </set-header>
+    <set-header name="x-effective-model" exists-action="override">
+      <value>@((string)context.Variables["effectiveModel"])</value>
+    </set-header>
+    <set-header name="x-model-fallback-applied" exists-action="override">
+      <value>@(((bool)context.Variables["fallbackApplied"]).ToString().ToLowerInvariant())</value>
+    </set-header>
+    <set-header name="x-policy-resolution" exists-action="override">
+      <value>@((string)context.Variables["policyResolution"])</value>
+    </set-header>
+    <set-header name="x-usage-quality" exists-action="override">
+      <value>@((string)context.Variables["usageQuality"])</value>
+    </set-header>
+    <!-- The notice is prepended to text the caller was going to read anyway, and only
+         where doing so cannot corrupt a parse. A streamed response is excluded because
+         rewriting a body requires buffering it, and buffering a stream would cost every
+         caller its first token to inform the few whose model changed. Every refusal
+         leaves the body untouched and the headers still state the substitution. -->
+    <choose>
+      <when condition='@((bool)context.Variables["fallbackApplied"] &amp;&amp; string.Equals((string)context.Variables["substitutionNotice"], "inline", StringComparison.Ordinal) &amp;&amp; !(bool)context.Variables["streaming"] &amp;&amp; context.Response.StatusCode == 200)'>
+        <set-body>@{
+            var unchanged = context.Response.Body.As&lt;string&gt;(preserveContent: true);
+            var request = (JObject)context.Variables["requestBody"];
+
+            var chatFormat = request["response_format"] as JObject;
+            if (chatFormat != null &amp;&amp; (string)chatFormat["type"] != "text") { return unchanged; }
+            var responsesFormat = request["text"] as JObject;
+            if (responsesFormat != null &amp;&amp; responsesFormat["format"] != null &amp;&amp; (string)responsesFormat["format"]["type"] != "text") { return unchanged; }
+
+            JObject body;
+            try { body = context.Response.Body.As&lt;JObject&gt;(preserveContent: true); }
+            catch { return unchanged; }
+            if (body == null) { return unchanged; }
+
+            var notice = "{{substitution-notice-text}}".Replace("{model}", (string)context.Variables["effectiveModel"]) + "\n\n";
+
+            if (context.Operation.Id == "createChatCompletion")
+            {
+              var choices = body["choices"] as JArray;
+              if (choices == null || choices.Count != 1) { return unchanged; }
+              var message = choices[0]["message"] as JObject;
+              if (message == null || message["tool_calls"] != null || message["function_call"] != null) { return unchanged; }
+              var content = message["content"];
+              if (content == null || content.Type != JTokenType.String || string.IsNullOrEmpty((string)content)) { return unchanged; }
+              message["content"] = notice + (string)content;
+              return body.ToString(Newtonsoft.Json.Formatting.None);
+            }
+
+            var output = body["output"] as JArray;
+            if (output == null) { return unchanged; }
+            if (output.Any(item =&gt; (string)item["type"] != "message")) { return unchanged; }
+            var first = output.FirstOrDefault(item =&gt; (string)item["type"] == "message") as JObject;
+            if (first == null) { return unchanged; }
+            var parts = first["content"] as JArray;
+            if (parts == null || parts.Count == 0) { return unchanged; }
+            var text = parts.FirstOrDefault(part =&gt; (string)part["type"] == "output_text") as JObject;
+            if (text == null || text["text"] == null || text["text"].Type != JTokenType.String) { return unchanged; }
+            text["text"] = notice + (string)text["text"];
+            return body.ToString(Newtonsoft.Json.Formatting.None);
+          }</set-body>
+      </when>
+    </choose>
+    <!-- What the gateway actually charged. A streamed response that the client abandons
+         produces no usage log, but the quota was already debited, so without this the
+         ledger would show nothing for a request that spent budget. -->
+    <trace source="llm-governance-completion" severity="information">
+      <message>@("governed request completed")</message>
+      <metadata name="ConsumedTokens" value='@(context.Variables.ContainsKey("consumedTokens") ? Convert.ToInt64(context.Variables["consumedTokens"]).ToString() : "0")' />
+      <metadata name="Streaming" value='@(((bool)context.Variables["streaming"]).ToString())' />
+      <metadata name="Completed" value="True" />
+    </trace>
+  </outbound>
+  <on-error>
+    <!-- The same record on the failure path. A disconnect is exactly the case the ledger
+         must not lose, and it is the case where outbound never finishes. -->
+    <trace source="llm-governance-completion" severity="information">
+      <message>@("governed request ended without a completed response")</message>
+      <metadata name="ConsumedTokens" value='@(context.Variables.ContainsKey("consumedTokens") ? Convert.ToInt64(context.Variables["consumedTokens"]).ToString() : "0")' />
+      <metadata name="Streaming" value='@(context.Variables.ContainsKey("streaming") ? ((bool)context.Variables["streaming"]).ToString() : "False")' />
+      <metadata name="Completed" value="False" />
+    </trace>
+    <choose>
+      <!-- A URI that matches no operation never entered the pipeline, so it is a routing
+           refusal rather than a gateway fault. Left to the catch-all it returned 500,
+           which told a caller with a wrong path that the gateway had failed and turned a
+           client error into a server error in every availability metric. The reply names
+           no route, so it cannot be used to enumerate what exists. -->
+      <when condition='@(context.LastError.Reason == "OperationNotFound")'>
+        <return-response>
+          <set-status code="404" reason="Not Found" />
+          <set-header name="Content-Type" exists-action="override">
+            <value>application/json</value>
+          </set-header>
+          <set-header name="x-request-id" exists-action="override">
+            <value>@(context.RequestId.ToString())</value>
+          </set-header>
+          <set-body>{"error":{"message":"This gateway route is not supported.","type":"invalid_request_error","param":null,"code":"route_not_supported"}}</set-body>
+        </return-response>
+      </when>
+      <when condition='@(context.LastError.PolicyId == "entra-token-validation" || context.LastError.PolicyId == "entra-workload-token-validation" || (context.Response != null &amp;&amp; context.Response.StatusCode == 401))'>
+        <return-response>
+          <set-status code="401" reason="Unauthorized" />
+          <set-header name="Content-Type" exists-action="override">
+            <value>application/json</value>
+          </set-header>
+          <set-header name="x-request-id" exists-action="override">
+            <value>@(context.RequestId.ToString())</value>
+          </set-header>
+          <!-- Points a client that has never been configured for this gateway at the document
+               describing how to authenticate to it, so discovery does not depend on somebody
+               having been told the tenant and audience out of band. -->
+          <set-header name="WWW-Authenticate" exists-action="override">
+            <value>Bearer error="invalid_token", resource_metadata="https://{{gateway-host}}/.well-known/oauth-protected-resource/v1"</value>
+          </set-header>
+          <set-body>{"error":{"message":"A valid gateway access token is required.","type":"authentication_error","param":null,"code":"invalid_token"}}</set-body>
+        </return-response>
+      </when>
+      <when condition='@(context.LastError.PolicyId == "request-content-validation")'>
+        <return-response>
+          <set-status code="400" reason="Bad Request" />
+          <set-header name="Content-Type" exists-action="override">
+            <value>application/json</value>
+          </set-header>
+          <set-header name="x-request-id" exists-action="override">
+            <value>@(context.RequestId.ToString())</value>
+          </set-header>
+          <set-body>{"error":{"message":"The request body is not valid for this operation.","type":"invalid_request_error","param":null,"code":"invalid_request_body"}}</set-body>
+        </return-response>
+      </when>
+      <when condition='@(context.LastError.Reason != "ExpressionValueEvaluationFailure" &amp;&amp; (context.Variables.ContainsKey("quotaRetryAfter") || (context.LastError.Reason ?? "").Contains("Quota") || context.LastError.PolicyId == "organization-token-quota" || context.LastError.PolicyId == "team-token-limit" || context.LastError.PolicyId == "subject-token-limit" || context.LastError.PolicyId == "application-token-limit" || context.LastError.PolicyId == "organization-model-token-limit" || context.LastError.PolicyId == "team-model-token-limit"))'>
+        <return-response>
+          <set-status code="403" reason="Forbidden" />
+          <set-header name="Content-Type" exists-action="override">
+            <value>application/json</value>
+          </set-header>
+          <set-header name="x-request-id" exists-action="override">
+            <value>@(context.RequestId.ToString())</value>
+          </set-header>
+          <set-header name="Retry-After" exists-action="override">
+            <value>@(context.Variables.ContainsKey("quotaRetryAfter") ? Convert.ToString(context.Variables["quotaRetryAfter"]) : "3600")</value>
+          </set-header>
+          <set-body>{"error":{"message":"The applicable token budget has been exhausted. It is restored when the budget period resets, or when an administrator raises it. Retrying before then cannot succeed.","type":"permission_error","param":null,"code":"token_quota_exceeded"}}</set-body>
+        </return-response>
+      </when>
+      <when condition='@(context.LastError.PolicyId == "subject-request-limit" || context.LastError.Reason == "RateLimitExceeded" || (context.LastError.Reason != "ExpressionValueEvaluationFailure" &amp;&amp; (context.LastError.Reason ?? "").StartsWith("TokenLimitExceeded")) || (context.Response != null &amp;&amp; context.Response.StatusCode == 429))'>
+        <return-response>
+          <set-status code="429" reason="Too Many Requests" />
+          <set-header name="Content-Type" exists-action="override">
+            <value>application/json</value>
+          </set-header>
+          <set-header name="x-request-id" exists-action="override">
+            <value>@(context.RequestId.ToString())</value>
+          </set-header>
+          <set-header name="Retry-After" exists-action="override">
+            <value>@(context.Variables.ContainsKey("rateRetryAfter") ? Convert.ToString(context.Variables["rateRetryAfter"]) : (context.Response != null ? context.Response.Headers.GetValueOrDefault("Retry-After", "60") : "60"))</value>
+          </set-header>
+          <set-body>{"error":{"message":"A protective gateway limit was exceeded.","type":"rate_limit_error","param":null,"code":"rate_limit_exceeded"}}</set-body>
+        </return-response>
+      </when>
+      <when condition='@(context.LastError.Reason == "BackendConnectionFailure")'>
+        <return-response>
+          <set-status code="502" reason="Bad Gateway" />
+          <set-header name="Content-Type" exists-action="override">
+            <value>application/json</value>
+          </set-header>
+          <set-header name="x-request-id" exists-action="override">
+            <value>@(context.RequestId.ToString())</value>
+          </set-header>
+          <set-body>{"error":{"message":"The model backend returned no valid response.","type":"gateway_error","param":null,"code":"bad_gateway"}}</set-body>
+        </return-response>
+      </when>
+      <!-- A backend whose circuit breaker has tripped is documented to produce a 503, and a
+           pool every member of which has tripped leaves no member to try. The reason code for
+           that case is not documented, so this branch keys on the status API Management itself
+           produced rather than on a guessed reason, and the catch-all cannot turn a backend
+           that is merely unavailable into a report that this gateway failed. -->
+      <when condition='@(context.LastError.PolicyId == "foundry-managed-identity" || context.LastError.Reason == "Timeout" || (context.Response != null &amp;&amp; context.Response.StatusCode == 503))'>
+        <return-response>
+          <set-status code="503" reason="Service Unavailable" />
+          <set-header name="Content-Type" exists-action="override">
+            <value>application/json</value>
+          </set-header>
+          <set-header name="x-request-id" exists-action="override">
+            <value>@(context.RequestId.ToString())</value>
+          </set-header>
+          <set-body>{"error":{"message":"The model backend is temporarily unavailable.","type":"gateway_error","param":null,"code":"service_unavailable"}}</set-body>
+        </return-response>
+      </when>
+      <!-- Anything that went wrong while the gateway was talking to the backend, and that is
+           not this gateway's own expression defect, is the backend being unavailable. Naming
+           the section rather than a reason is what makes this hold for a failure nobody has
+           documented yet: twice already an unclassified refusal reached the catch-all and was
+           reported to the caller as a 500, which is both wrong and counted as our outage. -->
+      <when condition='@(context.LastError.Section == "backend" &amp;&amp; context.LastError.Reason != "ExpressionValueEvaluationFailure")'>
+        <return-response>
+          <set-status code="503" reason="Service Unavailable" />
+          <set-header name="Content-Type" exists-action="override">
+            <value>application/json</value>
+          </set-header>
+          <set-header name="x-request-id" exists-action="override">
+            <value>@(context.RequestId.ToString())</value>
+          </set-header>
+          <set-body>{"error":{"message":"The model backend is temporarily unavailable.","type":"gateway_error","param":null,"code":"service_unavailable"}}</set-body>
+        </return-response>
+      </when>
+      <otherwise>
+        <return-response>
+          <set-status code="500" reason="Internal Server Error" />
+          <set-header name="Content-Type" exists-action="override">
+            <value>application/json</value>
+          </set-header>
+          <set-header name="x-request-id" exists-action="override">
+            <value>@(context.RequestId.ToString())</value>
+          </set-header>
+          <set-body>{"error":{"message":"The gateway could not complete the request.","type":"gateway_error","param":null,"code":"gateway_error"}}</set-body>
+        </return-response>
+      </otherwise>
+    </choose>
+  </on-error>
+</policies>

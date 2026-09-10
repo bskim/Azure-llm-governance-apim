@@ -1,0 +1,160 @@
+# Operating And Removing An Evaluation Environment
+
+This runbook describes environment-neutral operation and cleanup for a customer-managed evaluation. It defines safety boundaries and approval points; it does not authorize access to any environment.
+
+## What This Runbook Covers
+
+Use a dedicated, customer-chosen environment and resource boundary for each evaluation. Record its identifiers in the customer's controlled operating system, not in public documentation.
+
+This runbook covers:
+
+- repository-local preparation;
+- separately authorized validation, deployment, operation, and cleanup;
+- runtime policy checks; and
+- ownership-aware removal.
+
+## Authorization And Phase Boundaries
+
+Repository-local checks establish only local consistency. They do not establish cloud readiness, access authorization, deployment success, data-plane behavior, or cleanup ownership.
+
+Keep each phase separately authorized:
+
+| Phase | Customer decision |
+|---|---|
+| Local preparation | Which source revision and checks are accepted |
+| Validation | Which target and read-only operations may be inspected |
+| Provisioning and deployment | Which resources and artifacts may be created or updated |
+| Operation | Which callers, endpoints, models, and telemetry may be tested |
+| Cleanup | Which owned resources may be deleted or purged |
+
+An authorization applies only to its named action, target, identity, and time window. Do not infer a later authorization from an earlier sign-in, role, or successful check.
+
+## Define The Evaluation Boundary
+
+Before provisioning, record:
+
+- the selected environment name and subscription;
+- the resource groups the evaluation owns;
+- reused resources that remain external dependencies;
+- pre-existing resources that must not change; and
+- the identities and directory objects created specifically for the evaluation.
+
+Names, prefixes, resource-group membership, and configuration references do not prove ownership. Reusing an endpoint, deployment, identity, or group never transfers deletion ownership.
+
+## Repository-Local Preparation
+
+Use the repository's documented local checks after configuring the organization's approved package registry policy. Package integrity must satisfy that registry and package-manager policy; missing or mismatched integrity must be rejected. If no approved policy is available, fail closed or leave validation incomplete.
+
+Customers own registry governance, license review, SBOM review, signing, and release approval. Local checks do not grant any of those approvals.
+
+Record the tested source revision, commands, exit status, skipped checks, and unresolved failures in the customer's controlled system. Do not publish environment-specific records or internal review material in customer documentation.
+
+## Validate And Deploy
+
+Before each cloud action, confirm the active authentication context and target boundary. Review previews for creates, updates, deletions, external dependencies, and protected resources.
+
+Provision or deploy only after the customer approves the exact target and action. A deployment preview is not permission to provision, and deployment permission is not permission to run data-plane tests or cleanup.
+
+## Operate The Evaluation
+
+### Start-Up Checks
+
+Before sending a governed request:
+
+- confirm the active environment and resource boundary;
+- confirm reused dependencies are marked reference-only;
+- confirm the administration and gateway endpoints came from this deployment;
+- confirm the active governance revision and provider mapping are complete; and
+- stop if any target resolves to a protected or unowned resource.
+
+### Interpret Runtime Results
+
+- `200` from `/api/healthz` establishes control-plane reachability only.
+- `403 model_not_allowed` is a policy refusal and should not be retried as a transient failure.
+- `503 governance_unavailable` means complete governance data is unavailable; it is not a caller denial.
+- Usage records should contain token counts rather than prompt or completion bodies.
+- When fallback changes the requested model, record the effective model.
+
+Direct requests to Foundry bypass this gateway's policy and telemetry. They do not validate gateway operation.
+
+### Stop Conditions
+
+Stop and obtain a new decision when:
+
+- the target differs from the approved boundary;
+- a plan includes a protected or unowned resource;
+- ownership records are missing or contradictory;
+- one command combines separately authorized phases; or
+- a result is partial, unavailable, or inconsistent with the expected boundary.
+
+Do not broaden the target to make an operation succeed. Preserve the last known-good active governance revision.
+
+## Cleanup Decision Gate
+
+Cleanup requires explicit approval naming the environment, intended targets, and authorized phase. A standing explicit approval may already cover that phase; do not repeat a blanket decision when its scope remains valid. Review a removal preview before any delete or purge action.
+
+The exact-ID ownership readback used by a removal preview is valid for at most 30 minutes. Refresh and reseal the readback before each separately authorized delete or purge phase. A standing approval does not extend that evidence lifetime: authorization fails if the readback is invalid, from the future, older than 30 minutes, predates the ownership manifest, or has expired when the phase is authorized.
+
+For every candidate, confirm:
+
+- its complete resource or directory-object identifier;
+- its type and containing resource group, when applicable;
+- a customer-controlled creation or ownership record;
+- whether it existed before the evaluation; and
+- whether deletion could affect a reused or protected dependency.
+
+Exclude ambiguous candidates. Delete only approved, evaluation-owned resources whose identifiers still match. Do not substitute a similarly named resource after identifier drift.
+
+Keep these actions separate:
+
+- previewing removal;
+- deleting cloud resources;
+- deleting directory objects;
+- purging soft-deleted API Management resources; and
+- purging soft-deleted Key Vault resources.
+
+Deletion does not prove that a name is reusable, a directory object is absent, or a soft-deleted resource was purged. Service retention and the operator's permissions determine whether purge is available.
+
+### Soft Delete And Name Reuse
+
+- Key Vault purge protection remains enabled with the configured soft-delete retention period. A protected vault cannot be purged before retention expires.
+- API Management deletion and purge are separate operations with separate permission boundaries.
+- Entra directory-object deletion is separate from resource-group deletion and service principals may remain as recoverable deleted items. Active absence is not purge proof.
+
+After cleanup, record deleted, retained, unchecked, and soft-deleted targets in the customer's controlled system, matching each action to the exact ownership receipt. Do not perform blanket tenant purges. Report partial completion as partial completion.
+
+## Policy Checks During Operation
+
+### Model Access
+
+The organization model list is a ceiling, not a grant. Applicable team, subject, and application grants combine by union, and the organization ceiling then filters the result.
+
+Every caller needs at least one applicable team, subject, or application grant. A grant outside the organization ceiling produces no allowed model and never widens the ceiling.
+
+### Refused Versus Unavailable
+
+- `403` means the gateway established caller policy and refused the request.
+- `503` with `Retry-After` means complete identity or policy data was unavailable.
+
+Keep these outcomes distinct because they require different investigations.
+
+### Limits, Budgets, And Fallback
+
+- Per-minute request and token limits are independent; the lowest applicable value wins for each counter.
+- Quotas are compared using normalized hourly rates, while the selected quota retains its authored amount and period.
+- Every applicable budget keeps an independent counter, and any exhausted budget can stop a request.
+- `HARD_BLOCK` blocks at the token limit; `SOFT_WARNING` warns at the limit and blocks after its grace allowance; `THROTTLE` applies request-rate tiers without a hard quota of its own. Configuration and a no-fallback blocking example are in [Budget actions](02-administration.md#budget-actions).
+- Budgets are best effort because in-flight requests may complete.
+- Exactly one fallback plan applies, selected by specificity: application, subject, team, then organization.
+- A more specific fallback plan replaces the less specific plan instead of merging with it.
+- Fallback uses at most one model connection per request. With no permitted connection, the requested model remains subject to its quotas and budgets; the reference-only `onExhausted: deny` setting is not a deployed APIM control. See [Editing an existing fallback plan](02-administration.md#editing-an-existing-fallback-plan).
+
+Measure representative coding-agent traffic before setting limits because agents resend conversation and workspace context.
+
+## Related Guides
+
+- [PoC Quickstart](00-quickstart.md) gives the shortest evaluation path.
+- [Deploying The Gateway](01-deployment.md) is the deployment and troubleshooting reference.
+- [Using The Administration Console](02-administration.md) explains revisions, models, budgets, usage, and notifications.
+- [Connecting A Coding Agent](04-connection.md) explains the client contract.
+- [Sending Governance Notifications to a Chat Channel](05-notifications.md) explains optional notification delivery.

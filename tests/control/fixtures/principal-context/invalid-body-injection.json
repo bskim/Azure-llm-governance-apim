@@ -1,0 +1,38 @@
+{
+  "contractVersion": "v1",
+  "prompt": "forbidden",
+  "trust": {
+    "source": "local-deterministic",
+    "validationId": "validation-body-001",
+    "validatedAt": "2026-07-24T00:00:00Z",
+    "credentialExpiresAt": "2026-07-24T01:00:00Z",
+    "validationState": "local-trusted",
+    "callerSupplied": false
+  },
+  "subject": {
+    "tenantId": "tenant-synthetic",
+    "subjectId": "user-synthetic-body",
+    "principalType": "user"
+  },
+  "application": {
+    "applicationId": "app-synthetic-cli",
+    "authenticationFlow": "delegated"
+  },
+  "memberships": {
+    "snapshotId": "snapshot-body-001",
+    "status": "empty-complete",
+    "source": "local-fixture",
+    "tenantId": "tenant-synthetic",
+    "subjectId": "user-synthetic-body",
+    "resolvedAt": "2026-07-23T23:59:00Z",
+    "expiresAt": "2026-07-24T00:30:00Z",
+    "maxAgeSeconds": 1860,
+    "sourceRevision": "revision-body-001",
+    "groups": []
+  },
+  "correlation": {
+    "source": "server-generated",
+    "requestId": "request-body-001",
+    "attempt": 1
+  }
+}

@@ -1,0 +1,52 @@
+Third-party notices and redistribution scope
+
+The repository's own source is licensed under the MIT terms in LICENSE.
+Dependencies retain their respective copyrights and licenses; the repository's
+MIT license does not replace those terms.
+
+Source snapshots
+----------------
+The public source snapshot does not include installed dependency packages or
+generated browser bundles. package.json and package-lock.json identify the
+dependencies to restore. Package metadata is not a substitute for the original
+license texts or a review of the files in a distribution.
+
+Administration console
+----------------------
+The authentication bundle includes Microsoft Authentication Library packages,
+including @azure/msal-browser and @azure/msal-common.
+
+The console build generates vendor/THIRD-PARTY-NOTICES.txt from the versions and
+original license files of the packages included in the bundle. Distribute that
+file together with vendor/entra-session.js. The normal console packaging path
+includes both files. Do not redistribute the JavaScript bundle by itself.
+
+Function application
+--------------------
+Preserve the original license, copyright, notice and licensing README files
+supplied with installed runtime dependencies. Do not remove these files when
+repackaging or pruning dependencies. Build-tool licenses are not substitutes for
+the licenses of runtime or browser code.
+
+Review scope
+------------
+The currently pinned priorityqueuejs@2.0.0 and semaphore@1.1.0 declare MIT in
+their manifests and/or version-specific READMEs. Those upstream version
+snapshots do not provide a full license text or an explicit copyright notice.
+Version-specific upstream MIT declarations:
+
+priorityqueuejs@2.0.0, Readme.md (npm gitHead):
+https://github.com/janogonzalez/priorityqueuejs/blob/5fc8ac2ea0482277ee8110182e1d743e31cef1aa/Readme.md#L85-L87
+
+semaphore@1.1.0, README.md (npm gitHead and release tag):
+https://github.com/abrkn/semaphore.js/blob/88a33875b168cc7b5943d7fe987c36d08321d252/README.md#L68-L71
+
+These references document the upstream declarations; the absence of a
+standalone license file does not itself mean a package is unlicensed. No
+copyright holder or year is inferred here. Links do not replace the preservation
+of license and copyright notices supplied with the distributed code.
+
+This file describes notice handling; it is not a complete consolidated license
+inventory or a legal or organizational release approval. Review the declarations
+and the material supplied with the actual distribution as part of publication
+approval. A successful build or the presence of this file is not that approval.

@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/llm-governance/contracts/v1/usage-rollup-document.schema.json",
+  "title": "Usage Rollup Document V1",
+  "description": "A pre-aggregated usage view that dashboards read directly. Freshness and completeness are stored fields rather than properties a reader has to infer from query time.",
+  "x-contract-direction": "server-output-only",
+  "x-semantic-validation-required": true,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractVersion",
+    "documentType",
+    "id",
+    "scopeGroupId",
+    "grain",
+    "windowStart",
+    "windowEnd",
+    "asOf",
+    "completeness",
+    "sourceRevision",
+    "totals",
+    "byModel"
+  ],
+  "properties": {
+    "contractVersion": { "const": "v1" },
+    "documentType": { "const": "usage-rollup" },
+    "id": { "$ref": "#/$defs/documentId" },
+    "scopeGroupId": { "$ref": "#/$defs/safeId" },
+    "grain": {
+      "description": "The aggregation grain. 'organization' rolls up every team in the deployment.",
+      "enum": ["organization", "team", "subject", "application"]
+    },
+    "grainKey": {
+      "description": "Identifies the aggregated principal. Absent for the organization grain. Pseudonymous for subject and application; canonical for team.",
+      "$ref": "#/$defs/safeId"
+    },
+    "windowStart": { "type": "string", "format": "date-time" },
+    "windowEnd": { "type": "string", "format": "date-time" },
+    "asOf": {
+      "description": "When the projector produced this document. A document may summarize a still-open window, but only a closed one may claim to be complete.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "completeness": { "$ref": "#/$defs/completeness" },
+    "sourceRevision": {
+      "description": "Identifies the projector run that produced this document, so a rewrite can be traced.",
+      "$ref": "#/$defs/safeId"
+    },
+    "totals": { "$ref": "#/$defs/measures" },
+    "byModel": {
+      "type": "array",
+      "maxItems": 256,
+      "items": { "$ref": "#/$defs/modelMeasures" }
+    }
+  },
+  "$defs": {
+    "safeId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "documentId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255,
+      "pattern": "^usage-rollup\\|[A-Za-z0-9._:-]+\\|[a-z]+\\|[A-Za-z0-9._:-]*\\|[0-9TZ:.-]+$"
+    },
+    "completeness": {
+      "description": "How complete this aggregate is known to be. A reader must be able to tell a whole window from a partial one without asking the source.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "reason"],
+      "properties": {
+        "state": {
+          "description": "'complete' means the window closed and the source reported no shortfall. 'partial' means the window is still open or the source was truncated. 'degraded' means the source could not be trusted for this window.",
+          "enum": ["complete", "partial", "degraded"]
+        },
+        "reason": {
+          "enum": [
+            "window-closed",
+            "window-open",
+            "source-truncated",
+            "source-unavailable",
+            "ingestion-lag"
+          ]
+        },
+        "observedRows": { "type": "integer", "minimum": 0 },
+        "rowLimit": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "measures": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requests", "promptTokens", "completionTokens", "totalTokens", "tokenQuality"],
+      "properties": {
+        "requests": { "type": "integer", "minimum": 0 },
+        "promptTokens": { "type": "integer", "minimum": 0 },
+        "completionTokens": { "type": "integer", "minimum": 0 },
+        "totalTokens": { "type": "integer", "minimum": 0 },
+        "refusedRequests": { "type": "integer", "minimum": 0 },
+        "fallbackRequests": { "type": "integer", "minimum": 0 },
+        "tokenQuality": {
+          "description": "Whether the token counts came from the provider or were estimated by the gateway. Mixed means the window contains both.",
+          "enum": ["reported", "estimated", "mixed", "unknown"]
+        }
+      }
+    },
+    "modelMeasures": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model", "measures"],
+      "properties": {
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9._-]+$"
+        },
+        "measures": { "$ref": "#/$defs/measures" }
+      }
+    }
+  }
+}

@@ -1,0 +1,56 @@
+name: llm-governance-apim
+metadata:
+  template: llm-governance-apim@0.1.0
+infra:
+  provider: bicep
+  path: infra
+
+hooks:
+  preprovision:
+    posix:
+      shell: sh
+      run: node tools/distribution/Validate-DeploymentInputs.mjs
+    windows:
+      shell: pwsh
+      run: node tools/distribution/Validate-DeploymentInputs.mjs
+  # A fresh Flex Consumption create can materialize an empty allowedApplications
+  # array on Easy Auth, which is enforced as deny-all. This repairs that one key when
+  # it is empty and is a no-op otherwise, so it is safe to run after every provision.
+  postprovision:
+    posix:
+      shell: sh
+      run: node tools/distribution/Repair-EasyAuthClientAllowlist.mjs
+    windows:
+      shell: pwsh
+      run: node tools/distribution/Repair-EasyAuthClientAllowlist.mjs
+  # The console's identity configuration is written from provisioning outputs, so the
+  # build runs after infrastructure exists and before anything is packaged.
+  prepackage:
+    posix:
+      shell: sh
+      run: node tools/build-admin-ui.mjs
+    windows:
+      shell: pwsh
+      run: node tools/build-admin-ui.mjs
+
+services:
+  control-plane:
+    project: .
+    language: js
+    host: function
+  admin-console:
+    project: ./app/admin-ui
+    language: js
+    host: staticwebapp
+    dist: public
+    # Repeated at the service because a root prepackage hook does not run when azd
+    # packages a single service during deploy, which shipped a console with no
+    # configuration at all.
+    hooks:
+      prepackage:
+        posix:
+          shell: sh
+          run: node ../../tools/build-admin-ui.mjs
+        windows:
+          shell: pwsh
+          run: node ../../tools/build-admin-ui.mjs

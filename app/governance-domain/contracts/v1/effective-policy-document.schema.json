@@ -1,0 +1,235 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/llm-governance/contracts/v1/effective-policy-document.schema.json",
+  "title": "Effective Policy Document V1",
+  "description": "The single composed document the gateway resolves once per request through one cache lookup. It carries the caps, allowlist, and fallback chain that apply to one caller, and nothing else.",
+  "x-contract-direction": "server-output-only",
+  "x-semantic-validation-required": true,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractVersion",
+    "documentType",
+    "id",
+    "scopeGroupId",
+    "principalKey",
+    "configVersion",
+    "resolution",
+    "resolvedAt",
+    "expiresAt",
+    "attribution",
+    "allowedModels",
+    "limits",
+    "fallback"
+  ],
+  "properties": {
+    "contractVersion": { "const": "v1" },
+    "documentType": { "const": "effective-policy" },
+    "id": { "$ref": "#/$defs/documentId" },
+    "scopeGroupId": { "$ref": "#/$defs/safeId" },
+    "principalKey": {
+      "description": "Stable pseudonymous key for the caller. Never a raw tenant, subject, group, or application identifier.",
+      "$ref": "#/$defs/pseudonymousKey"
+    },
+    "configVersion": { "type": "integer", "minimum": 1 },
+    "resolution": {
+      "description": "'resolved' is a fully evaluated policy. 'default' is the degraded resolution applied when the caller's policy could not be read.",
+      "enum": ["resolved", "default"]
+    },
+    "resolvedAt": { "type": "string", "format": "date-time" },
+    "expiresAt": { "type": "string", "format": "date-time" },
+    "attribution": { "$ref": "#/$defs/attribution" },
+    "allowedModels": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/modelAlias" }
+    },
+    "modelDeployments": {
+      "description": "Provider deployment selected for each logical model alias. This changes backend dispatch only; governance and attribution retain the logical model key.",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/modelDeployment" }
+    },
+    "limits": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/limit" }
+    },
+    "fallback": { "$ref": "#/$defs/fallback" },
+    "warnThresholdPercent": { "type": "integer", "minimum": 1, "maximum": 99 },
+    "throttleTiers": {
+      "description": "Which tier applies at which share of the quota. Tiers are declared rather than computed, because the gateway's rate attributes are deployment-time literals until expression support for them is confirmed, so the deployment owns what each tier's rate actually is.",
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["scope", "modelScope", "budgetId", "budgetVersion", "action", "quotaPeriod", "accountingBasis", "againstTokenQuota", "atBasisPoints", "tierCode"],
+        "properties": {
+          "scope": { "enum": ["organization", "team", "subject", "application"] },
+          "modelScope": { "enum": ["all-models", "per-model"] },
+          "modelKey": { "$ref": "#/$defs/modelAlias" },
+          "budgetId": { "$ref": "#/$defs/safeId" },
+          "budgetVersion": { "type": "integer", "minimum": 1 },
+          "action": { "const": "THROTTLE" },
+          "quotaPeriod": { "enum": ["Hourly", "Daily", "Weekly", "Monthly", "Yearly"] },
+          "accountingBasis": { "const": "apim-estimated-total-tokens" },
+          "againstTokenQuota": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+          "atBasisPoints": { "type": "integer", "minimum": 1, "maximum": 20000 },
+          "tierCode": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 63,
+            "pattern": "^[a-z][a-z0-9-]+$"
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": { "modelScope": { "const": "per-model" } },
+              "required": ["modelScope"]
+            },
+            "then": { "required": ["modelKey"] },
+            "else": { "not": { "required": ["modelKey"] } }
+          }
+        ]
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "resolution": { "const": "resolved" } },
+        "required": ["resolution"]
+      },
+      "then": { "required": ["modelDeployments"] }
+    },
+    {
+      "if": {
+        "properties": { "resolution": { "const": "default" } },
+        "required": ["resolution"]
+      },
+      "then": {
+        "description": "A degraded resolution must not enable fallback, because a fallback target cannot be checked against an entitlement that could not be read.",
+        "properties": {
+          "fallback": {
+            "properties": { "enabled": { "const": false } }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "safeId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "documentId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255,
+      "pattern": "^effective-policy\\|[A-Za-z0-9._:-]+\\|[A-Za-z0-9._-]+$"
+    },
+    "pseudonymousKey": {
+      "type": "string",
+      "minLength": 16,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._-]+$"
+    },
+    "modelAlias": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9._-]+$"
+    },
+    "modelDeployment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["modelKey", "providerDeploymentName"],
+      "properties": {
+        "modelKey": { "$ref": "#/$defs/modelAlias" },
+        "providerDeploymentName": { "$ref": "#/$defs/modelAlias" }
+      }
+    },
+    "attribution": {
+      "description": "The identifiers the gateway emits for attribution. Subject and application are pseudonymous; team is the canonical grouping key.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["subjectKey", "applicationKey", "teamKey"],
+      "properties": {
+        "subjectKey": { "type": "string", "pattern": "^sk[0-9]+-[A-Za-z0-9._-]{16,120}$" },
+        "applicationKey": { "type": "string", "pattern": "^ak[0-9]+-[A-Za-z0-9._-]{16,120}$" },
+        "teamKey": { "type": ["string", "null"], "pattern": "^[a-z][a-z0-9-]{1,62}$" }
+      }
+    },
+    "limit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scope", "modelScope"],
+      "anyOf": [
+        { "required": ["tokenQuota", "quotaPeriod"] },
+        { "required": ["tokensPerMinute"] },
+        { "required": ["requestsPerMinute"] }
+      ],
+      "dependentRequired": {
+        "tokenQuota": ["quotaPeriod"],
+        "quotaPeriod": ["tokenQuota"]
+      },
+      "properties": {
+        "scope": { "enum": ["organization", "team", "subject", "application"] },
+        "modelScope": { "enum": ["all-models", "per-model"] },
+        "modelKey": { "$ref": "#/$defs/modelAlias" },
+        "tokenQuota": {
+          "description": "Whole tokens for the quota period. Integer only; never a floating point value.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "quotaPeriod": { "enum": ["Hourly", "Daily", "Weekly", "Monthly", "Yearly"] },
+        "tokensPerMinute": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "requestsPerMinute": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "budgetId": { "$ref": "#/$defs/safeId" },
+        "budgetVersion": { "type": "integer", "minimum": 1 },
+        "budgetAction": { "enum": ["HARD_BLOCK", "SOFT_WARNING"] },
+        "accountingBasis": { "const": "apim-estimated-total-tokens" },
+        "budgetThresholds": { "type": "object" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "modelScope": { "const": "per-model" } },
+            "required": ["modelScope"]
+          },
+          "then": { "required": ["modelKey"] },
+          "else": { "not": { "required": ["modelKey"] } }
+        }
+      ]
+    },
+    "fallback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "maxDepth", "chain"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "maxDepth": { "type": "integer", "minimum": 1, "maximum": 4 },
+        "chain": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["from", "to"],
+            "properties": {
+              "from": { "$ref": "#/$defs/modelAlias" },
+              "to": { "$ref": "#/$defs/modelAlias" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

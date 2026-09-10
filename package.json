@@ -1,0 +1,27 @@
+{
+  "name": "llm-governance-apim",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Azure AI governance gateway control plane.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "test": "node tools/run-node-unit-tests.mjs",
+    "build:admin-ui": "node tools/build-admin-ui.mjs",
+    "supply-chain:check": "node tools/supply-chain/cli.mjs evidence",
+    "supply-chain:validate": "node tools/supply-chain/cli.mjs validate"
+  },
+  "dependencies": {
+    "@azure/cosmos": "4.10.0",
+    "@azure/functions": "4.16.2",
+    "@azure/identity": "4.13.1"
+  },
+  "main": "app/functions/index.mjs",
+  "devDependencies": {
+    "@azure/msal-browser": "5.17.1",
+    "esbuild": "0.28.1"
+  }
+}

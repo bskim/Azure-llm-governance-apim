@@ -1,0 +1,166 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/llm-governance/contracts/v1/budget-snapshot.schema.json",
+  "title": "Budget Snapshot V1",
+  "description": "Server-owned budget configuration for one caller. A budget is a governance lever, not an account: it is converted to a quota the gateway enforces when policy is published, and nothing here reserves, settles, or computes an amount owed.",
+  "x-contract-direction": "server-input-only",
+  "x-semantic-validation-required": true,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractVersion",
+    "snapshotId",
+    "tenantId",
+    "version",
+    "status",
+    "capturedAt",
+    "expiresAt",
+    "sourceRevision",
+    "budgets"
+  ],
+  "properties": {
+    "contractVersion": { "const": "v1" },
+    "snapshotId": { "$ref": "#/$defs/safeId" },
+    "tenantId": { "$ref": "#/$defs/safeId" },
+    "version": { "type": "integer", "minimum": 1 },
+    "status": {
+      "enum": ["complete", "incomplete", "stale", "ambiguous", "source-unavailable"]
+    },
+    "capturedAt": { "type": "string", "format": "date-time" },
+    "expiresAt": { "type": "string", "format": "date-time" },
+    "sourceRevision": { "$ref": "#/$defs/safeId" },
+    "reason": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "budgets": {
+      "type": "array",
+      "maxItems": 16,
+      "items": { "$ref": "#/$defs/budget" }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": { "enum": ["incomplete", "stale", "ambiguous", "source-unavailable"] }
+        },
+        "required": ["status"]
+      },
+      "then": {
+        "required": ["reason"],
+        "properties": { "budgets": { "maxItems": 0 } }
+      }
+    }
+  ],
+  "$defs": {
+    "safeId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "modelAlias": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9._-]+$"
+    },
+    "tierCode": {
+      "description": "Names a rate tier the deployment declares. The reduction itself is a deployment-time literal, because expression support for the gateway rate attributes is not yet confirmed.",
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 63,
+      "pattern": "^[a-z][a-z0-9-]+$"
+    },
+    "limit": {
+      "description": "A token count. Tokens are what the gateway meters; what they cost is answered by Azure Billing, where the per-request split across context length, caching and batching is resolved.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["unit", "currency", "amount"],
+      "properties": {
+        "unit": { "const": "tokens" },
+        "currency": { "type": "null" },
+        "amount": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+      }
+    },
+    "hardBlockThresholds": {
+      "description": "A hard block denies at the limit. It may declare an approaching signal, which arms model downgrade, but it may not declare a grace: a hard block with grace is a soft warning under another name.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "warnAtBasisPoints": { "type": "integer", "minimum": 1, "maximum": 9999 }
+      }
+    },
+    "softWarningThresholds": {
+      "description": "The enforced quota becomes the limit plus this grace, and the warning falls where the configured limit sits inside that larger quota. Grace is capped at one further limit.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["graceBasisPoints"],
+      "properties": {
+        "graceBasisPoints": { "type": "integer", "minimum": 1, "maximum": 10000 }
+      }
+    },
+    "throttleThresholds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tiers"],
+      "properties": {
+        "tiers": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["atBasisPoints", "tierCode"],
+            "properties": {
+              "atBasisPoints": { "type": "integer", "minimum": 1, "maximum": 20000 },
+              "tierCode": { "$ref": "#/$defs/tierCode" }
+            }
+          }
+        }
+      }
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "budgetId",
+        "budgetVersion",
+        "scope",
+        "action",
+        "modelScope",
+        "accountingBasis",
+        "limit",
+        "period",
+        "thresholds"
+      ],
+      "properties": {
+        "budgetId": { "$ref": "#/$defs/safeId" },
+        "budgetVersion": { "type": "integer", "minimum": 1 },
+        "scope": { "enum": ["organization", "team", "subject", "application"] },
+        "action": { "enum": ["HARD_BLOCK", "SOFT_WARNING", "THROTTLE"] },
+        "modelScope": { "enum": ["all-models", "per-model"] },
+        "modelKey": { "$ref": "#/$defs/modelAlias" },
+        "accountingBasis": { "const": "apim-estimated-total-tokens" },
+        "limit": { "$ref": "#/$defs/limit" },
+        "period": { "enum": ["Hourly", "Daily", "Weekly", "Monthly", "Yearly"] },
+        "thresholds": {
+          "oneOf": [
+            { "$ref": "#/$defs/hardBlockThresholds" },
+            { "$ref": "#/$defs/softWarningThresholds" },
+            { "$ref": "#/$defs/throttleThresholds" }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "modelScope": { "const": "per-model" } },
+            "required": ["modelScope"]
+          },
+          "then": { "required": ["modelKey"] },
+          "else": { "not": { "required": ["modelKey"] } }
+        }
+      ]
+    }
+  }
+}

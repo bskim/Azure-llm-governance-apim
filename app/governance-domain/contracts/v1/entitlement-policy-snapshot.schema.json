@@ -1,0 +1,172 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/llm-governance/contracts/v1/entitlement-policy-snapshot.schema.json",
+  "title": "Entitlement Policy Snapshot V1",
+  "description": "Server-owned model and limit policy snapshot used by the pure authorization evaluator.",
+  "x-contract-direction": "server-input-only",
+  "x-semantic-validation-required": true,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractVersion",
+    "snapshotId",
+    "tenantId",
+    "version",
+    "status",
+    "capturedAt",
+    "expiresAt",
+    "sourceRevision",
+    "teamCatalog",
+    "bindings"
+  ],
+  "properties": {
+    "contractVersion": { "const": "v1" },
+    "snapshotId": { "$ref": "#/$defs/safeId" },
+    "tenantId": { "$ref": "#/$defs/safeId" },
+    "version": { "type": "integer", "minimum": 1 },
+    "status": {
+      "enum": ["complete", "incomplete", "stale", "ambiguous", "source-unavailable"]
+    },
+    "capturedAt": { "type": "string", "format": "date-time" },
+    "expiresAt": { "type": "string", "format": "date-time" },
+    "sourceRevision": { "$ref": "#/$defs/safeId" },
+    "reason": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "teamCatalog": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/teamMapping" }
+    },
+    "bindings": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/binding" }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "enum": ["incomplete", "stale", "ambiguous", "source-unavailable"]
+          }
+        },
+        "required": ["status"]
+      },
+      "then": {
+        "required": ["reason"],
+        "properties": { "bindings": { "maxItems": 0 } }
+      }
+    }
+  ],
+  "$defs": {
+    "safeId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "teamMapping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["teamKey", "membershipGroupId"],
+      "properties": {
+        "teamKey": { "$ref": "#/$defs/safeId" },
+        "membershipGroupId": { "$ref": "#/$defs/safeId" }
+      }
+    },
+    "target": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "key"],
+          "properties": {
+            "kind": { "const": "global" },
+            "key": { "type": "null" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "key"],
+          "properties": {
+            "kind": { "enum": ["team", "subject", "application"] },
+            "key": { "$ref": "#/$defs/safeId" }
+          }
+        }
+      ]
+    },
+    "issuer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "key"],
+      "properties": {
+        "kind": { "enum": ["subject", "system"] },
+        "key": { "$ref": "#/$defs/safeId" }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "requestsPerMinute": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000000
+        },
+        "tokensPerMinute": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000000000
+        },
+        "tokenQuota": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "quotaPeriod": {
+          "enum": ["Hourly", "Daily", "Weekly", "Monthly", "Yearly"]
+        }
+      },
+      "dependentRequired": {
+        "tokenQuota": ["quotaPeriod"],
+        "quotaPeriod": ["tokenQuota"]
+      }
+    },
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bindingId",
+        "bindingVersion",
+        "state",
+        "target",
+        "modelAllowlist",
+        "limits",
+        "validFrom",
+        "validUntil",
+        "issuedBy",
+        "reasonCode"
+      ],
+      "properties": {
+        "bindingId": { "$ref": "#/$defs/safeId" },
+        "bindingVersion": { "type": "integer", "minimum": 1 },
+        "state": { "enum": ["active", "revoked", "expired"] },
+        "target": { "$ref": "#/$defs/target" },
+        "modelAllowlist": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/safeId" },
+          "uniqueItems": true
+        },
+        "limits": { "$ref": "#/$defs/limits" },
+        "validFrom": { "type": "string", "format": "date-time" },
+        "validUntil": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "string", "format": "date-time" }
+          ]
+        },
+        "issuedBy": { "$ref": "#/$defs/issuer" },
+        "reasonCode": { "$ref": "#/$defs/safeId" }
+      }
+    }
+  }
+}

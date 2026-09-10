@@ -1,0 +1,95 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Azure AI Governance Gateway OAuth Protected Resource Metadata",
+    "version": "0.1.0",
+    "description": "RFC 9728 OAuth 2.0 Protected Resource Metadata, served anonymously so a client can discover how to authenticate before it holds a token.",
+    "license": {
+      "name": "MIT",
+      "url": "https://opensource.org/license/mit"
+    }
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "The gateway host selected for the active environment."
+    }
+  ],
+  "security": [],
+  "paths": {
+    "/.well-known/oauth-protected-resource/v1": {
+      "get": {
+        "operationId": "getProtectedResourceMetadata",
+        "summary": "Get OAuth 2.0 protected resource metadata",
+        "x-governance-policy": "oauth-protected-resource",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Protected resource metadata document.",
+            "headers": {
+              "x-request-id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProtectedResourceMetadata"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ProtectedResourceMetadata": {
+        "type": "object",
+        "required": [
+          "resource",
+          "authorization_servers"
+        ],
+        "properties": {
+          "resource": {
+            "type": "string",
+            "description": "The resource identifier this metadata describes, byte-identical to the URL the metadata was derived from."
+          },
+          "authorization_servers": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            }
+          },
+          "scopes_supported": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "bearer_methods_supported": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "resource_name": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "headers": {
+      "RequestId": {
+        "description": "Opaque request correlation identifier assigned by the gateway.",
+        "schema": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

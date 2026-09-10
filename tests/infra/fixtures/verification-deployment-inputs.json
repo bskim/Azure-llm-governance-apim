@@ -1,0 +1,27 @@
+{
+  "environmentName": "verification",
+  "gatewayResourceGroupName": "rg-test-verification",
+  "principalKey": {
+    "mode": "existing",
+    "storeName": "kv-verification-fixture",
+    "secretName": "principal-derivation-key",
+    "directSecretPresent": false
+  },
+  "fc1": {
+    "instanceMemoryMB": 2048,
+    "maximumInstanceCount": 28,
+    "httpScaleGroups": 1,
+    "timerScaleGroups": 6,
+    "alwaysReadyReserve": 1,
+    "worstCaseCores": 197,
+    "regionalDefaultMarginCores": 53
+  },
+  "foundry": {
+    "create": false,
+    "ownership": "external-reference",
+    "resourceGroupName": "rg-test-foundry",
+    "accountName": "test-foundry-account",
+    "projectName": "test-project",
+    "deploymentName": "test-model"
+  }
+}

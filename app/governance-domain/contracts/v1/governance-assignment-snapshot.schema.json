@@ -1,0 +1,184 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/llm-governance/contracts/v1/governance-assignment-snapshot.schema.json",
+  "title": "Governance Assignment Snapshot V1",
+  "description": "Server-owned role assignment snapshot. It is a trusted evaluator input and must never be deserialized from a public request.",
+  "x-contract-direction": "server-input-only",
+  "x-semantic-validation-required": true,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractVersion",
+    "snapshotId",
+    "tenantId",
+    "version",
+    "status",
+    "capturedAt",
+    "expiresAt",
+    "sourceRevision",
+    "assignments"
+  ],
+  "properties": {
+    "contractVersion": { "const": "v1" },
+    "snapshotId": { "$ref": "#/$defs/safeId" },
+    "tenantId": { "$ref": "#/$defs/safeId" },
+    "version": { "type": "integer", "minimum": 1 },
+    "status": {
+      "enum": ["complete", "incomplete", "stale", "ambiguous", "source-unavailable"]
+    },
+    "capturedAt": { "type": "string", "format": "date-time" },
+    "expiresAt": { "type": "string", "format": "date-time" },
+    "sourceRevision": { "$ref": "#/$defs/safeId" },
+    "reason": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "assignments": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/assignment" }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "enum": ["incomplete", "stale", "ambiguous", "source-unavailable"]
+          }
+        },
+        "required": ["status"]
+      },
+      "then": {
+        "required": ["reason"],
+        "properties": { "assignments": { "maxItems": 0 } }
+      }
+    }
+  ],
+  "$defs": {
+    "safeId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "assignee": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "key"],
+      "properties": {
+        "kind": { "enum": ["subject", "group", "application"] },
+        "key": { "$ref": "#/$defs/safeId" }
+      }
+    },
+    "scope": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "key"],
+          "properties": {
+            "kind": { "const": "global" },
+            "key": { "type": "null" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "key"],
+          "properties": {
+            "kind": { "const": "team" },
+            "key": { "$ref": "#/$defs/safeId" }
+          }
+        }
+      ]
+    },
+    "issuer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "key"],
+      "properties": {
+        "kind": { "enum": ["subject", "system"] },
+        "key": { "$ref": "#/$defs/safeId" }
+      }
+    },
+    "assignment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "assignmentId",
+        "assignmentVersion",
+        "state",
+        "roleCode",
+        "assignee",
+        "scope",
+        "validFrom",
+        "validUntil",
+        "issuedBy",
+        "reasonCode"
+      ],
+      "properties": {
+        "assignmentId": { "$ref": "#/$defs/safeId" },
+        "assignmentVersion": { "type": "integer", "minimum": 1 },
+        "state": { "enum": ["active", "revoked", "expired"] },
+        "roleCode": {
+          "enum": [
+            "team-viewer",
+            "team-admin",
+            "auditor",
+            "governance-admin",
+            "configuration-approver",
+            "configuration-publisher",
+            "platform-operator"
+          ]
+        },
+        "assignee": { "$ref": "#/$defs/assignee" },
+        "scope": { "$ref": "#/$defs/scope" },
+        "validFrom": { "type": "string", "format": "date-time" },
+        "validUntil": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "string", "format": "date-time" }
+          ]
+        },
+        "issuedBy": { "$ref": "#/$defs/issuer" },
+        "reasonCode": { "$ref": "#/$defs/safeId" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "roleCode": { "enum": ["team-viewer", "team-admin"] }
+            },
+            "required": ["roleCode"]
+          },
+          "then": {
+            "properties": {
+              "scope": {
+                "properties": { "kind": { "const": "team" } }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "roleCode": {
+                "enum": [
+                  "governance-admin",
+                  "configuration-approver",
+                  "configuration-publisher",
+                  "platform-operator"
+                ]
+              }
+            },
+            "required": ["roleCode"]
+          },
+          "then": {
+            "properties": {
+              "scope": {
+                "properties": { "kind": { "const": "global" } }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

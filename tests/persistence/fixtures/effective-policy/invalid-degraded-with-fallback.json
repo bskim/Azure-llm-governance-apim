@@ -1,0 +1,31 @@
+{
+  "contractVersion": "v1",
+  "documentType": "effective-policy",
+  "id": "effective-policy|default|pk-0000000000000000",
+  "scopeGroupId": "default",
+  "principalKey": "pk-0000000000000000",
+  "configVersion": 1,
+  "resolution": "default",
+  "resolvedAt": "2026-08-04T00:00:00.000Z",
+  "expiresAt": "2026-08-04T00:00:30.000Z",
+  "attribution": {
+    "subjectKey": "sk1-0000000000000000000000000000000000",
+    "applicationKey": "ak1-1111111111111111111111111111111111",
+    "teamKey": "default"
+  },
+  "allowedModels": ["model-mini", "model-small"],
+  "limits": [
+    {
+      "scope": "organization",
+      "modelScope": "all-models",
+      "tokenQuota": 100000,
+      "quotaPeriod": "Monthly"
+    }
+  ],
+  "fallback": {
+    "enabled": true,
+    "maxDepth": 1,
+    "chain": [{ "from": "model-small", "to": "model-mini" }]
+  },
+  "warnThresholdPercent": 80
+}

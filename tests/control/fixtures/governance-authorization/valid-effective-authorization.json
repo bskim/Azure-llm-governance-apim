@@ -1,0 +1,55 @@
+{
+  "contractVersion": "v1",
+  "decision": "allow",
+  "readAuthority": "authoritative",
+  "reasonCode": "most-restrictive-policy",
+  "effectiveRoles": ["governance-admin"],
+  "permittedReadScopes": ["self", "team", "global"],
+  "permittedTeamKeys": ["team-alpha", "team-beta"],
+  "modelAllowlist": ["coding-primary"],
+  "limits": {
+    "requestsPerMinute": 70,
+    "tokensPerMinute": 70000
+  },
+  "appliedAssignments": [
+    {
+      "assignmentId": "assignment-governance-admin-001",
+      "assignmentVersion": 3,
+      "roleCode": "governance-admin",
+      "scopeKind": "global",
+      "scopeKey": null
+    }
+  ],
+  "appliedBindings": [
+    {
+      "bindingId": "binding-global-fixture-001",
+      "bindingVersion": 2,
+      "targetKind": "global",
+      "targetKey": null
+    },
+    {
+      "bindingId": "binding-subject-fixture-001",
+      "bindingVersion": 4,
+      "targetKind": "subject",
+      "targetKey": "user-synthetic-001"
+    },
+    {
+      "bindingId": "binding-team-alpha-fixture-001",
+      "bindingVersion": 2,
+      "targetKind": "team",
+      "targetKey": "team-alpha"
+    },
+    {
+      "bindingId": "binding-team-beta-fixture-001",
+      "bindingVersion": 2,
+      "targetKind": "team",
+      "targetKey": "team-beta"
+    }
+  ],
+  "assignmentSnapshotId": "assignment-snapshot-fixture-001",
+  "assignmentSnapshotVersion": 7,
+  "entitlementSnapshotId": "entitlement-snapshot-fixture-001",
+  "entitlementSnapshotVersion": 11,
+  "membershipSnapshotId": "snapshot-user-001",
+  "evaluationTime": "2026-07-24T00:00:00.000Z"
+}

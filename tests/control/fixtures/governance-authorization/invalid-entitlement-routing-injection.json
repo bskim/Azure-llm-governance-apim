@@ -1,0 +1,35 @@
+{
+  "contractVersion": "v1",
+  "snapshotId": "entitlement-snapshot-invalid-001",
+  "tenantId": "tenant-synthetic",
+  "version": 11,
+  "status": "complete",
+  "capturedAt": "2026-07-23T23:55:00Z",
+  "expiresAt": "2026-07-24T00:30:00Z",
+  "sourceRevision": "entitlement-source-invalid-001",
+  "teamCatalog": [],
+  "bindings": [
+    {
+      "bindingId": "binding-invalid-001",
+      "bindingVersion": 1,
+      "state": "active",
+      "target": {
+        "kind": "global",
+        "key": null
+      },
+      "modelAllowlist": ["coding-primary"],
+      "limits": {
+        "requestsPerMinute": 80,
+        "tokensPerMinute": 80000
+      },
+      "validFrom": "2026-07-23T00:00:00Z",
+      "validUntil": null,
+      "issuedBy": {
+        "kind": "subject",
+        "key": "user-approver-001"
+      },
+      "reasonCode": "approved-policy",
+      "backendUrl": "https://example.invalid"
+    }
+  ]
+}

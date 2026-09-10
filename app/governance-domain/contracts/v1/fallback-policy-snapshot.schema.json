@@ -1,0 +1,150 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/llm-governance/contracts/v1/fallback-policy-snapshot.schema.json",
+  "title": "Fallback Policy Snapshot V1",
+  "description": "Server-owned budget-driven model downgrade plans. Downgrade is deliberately single step: a primary model has one cheaper alternative and stops there. A plan may map many primaries, so an authored path can be longer than one hop, but no request ever walks more than one. A plan is proven acyclic before any caller's entitlement is applied, so the same configuration is valid or invalid independently of who asks for it.",
+  "x-contract-direction": "server-input-only",
+  "x-semantic-validation-required": true,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractVersion",
+    "snapshotId",
+    "tenantId",
+    "version",
+    "status",
+    "capturedAt",
+    "expiresAt",
+    "sourceRevision",
+    "plans"
+  ],
+  "properties": {
+    "contractVersion": { "const": "v1" },
+    "snapshotId": { "$ref": "#/$defs/safeId" },
+    "tenantId": { "$ref": "#/$defs/safeId" },
+    "version": { "type": "integer", "minimum": 1 },
+    "status": {
+      "enum": ["complete", "incomplete", "stale", "ambiguous", "source-unavailable"]
+    },
+    "capturedAt": { "type": "string", "format": "date-time" },
+    "expiresAt": { "type": "string", "format": "date-time" },
+    "sourceRevision": { "$ref": "#/$defs/safeId" },
+    "reason": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "plans": {
+      "type": "array",
+      "maxItems": 128,
+      "items": { "$ref": "#/$defs/fallbackPlan" }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": { "enum": ["incomplete", "stale", "ambiguous", "source-unavailable"] }
+        },
+        "required": ["status"]
+      },
+      "then": {
+        "required": ["reason"],
+        "properties": { "plans": { "maxItems": 0 } }
+      }
+    }
+  ],
+  "$defs": {
+    "safeId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "modelAlias": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9._-]+$"
+    },
+    "target": {
+      "description": "The same target shape the entitlement snapshot uses, so the product has one precedence model rather than two.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "key"],
+          "properties": {
+            "kind": { "const": "global" },
+            "key": { "type": "null" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "key"],
+          "properties": {
+            "kind": { "enum": ["team", "subject", "application"] },
+            "key": { "$ref": "#/$defs/safeId" }
+          }
+        }
+      ]
+    },
+    "issuer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "key"],
+      "properties": {
+        "kind": { "enum": ["subject", "system"] },
+        "key": { "$ref": "#/$defs/safeId" }
+      }
+    },
+    "edge": {
+      "description": "A single downgrade hop. At most one hop may leave any model, so a plan is a map from each primary model to its one cheaper alternative rather than a priority list.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from", "to"],
+      "properties": {
+        "from": { "$ref": "#/$defs/modelAlias" },
+        "to": { "$ref": "#/$defs/modelAlias" }
+      }
+    },
+    "fallbackPlan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "planId",
+        "planVersion",
+        "state",
+        "target",
+        "enabled",
+        "edges",
+        "validFrom",
+        "validUntil",
+        "issuedBy",
+        "reasonCode"
+      ],
+      "properties": {
+        "planId": { "$ref": "#/$defs/safeId" },
+        "planVersion": { "type": "integer", "minimum": 1 },
+        "state": { "enum": ["active", "revoked", "expired"] },
+        "target": { "$ref": "#/$defs/target" },
+        "enabled": {
+          "description": "Fallback is opt-in. A plan that exists but is switched off stays auditable; a deleted plan does not.",
+          "type": "boolean"
+        },
+        "onExhausted": {
+          "description": "Optional. What happens when budget pressure is present but no permitted target exists. Absent means 'continue-with-requested', which keeps serving the requested model and matches the warning-band behaviour the gateway already implements. 'deny' refuses the request and is a gateway change, not a configuration flag.",
+          "enum": ["deny", "continue-with-requested"]
+        },
+        "edges": {
+          "type": "array",
+          "maxItems": 32,
+          "items": { "$ref": "#/$defs/edge" }
+        },
+        "validFrom": { "type": "string", "format": "date-time" },
+        "validUntil": {
+          "oneOf": [{ "type": "null" }, { "type": "string", "format": "date-time" }]
+        },
+        "issuedBy": { "$ref": "#/$defs/issuer" },
+        "reasonCode": { "$ref": "#/$defs/safeId" }
+      }
+    }
+  }
+}

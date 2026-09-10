@@ -1,0 +1,828 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Local deterministic governance control overview" data-i18n-content="app.description">
+    <script>
+      (() => {
+        const param = new URLSearchParams(window.location.search).get("scoutTheme");
+        const theme =
+          param || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+        document.documentElement.setAttribute("data-theme", theme);
+      })();
+    </script>
+    <title>Governance Control</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content" data-i18n="app.skipToMain">Skip to main content</a>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="product-lockup">
+          <span class="product-mark" aria-hidden="true">GC</span>
+          <div>
+            <p class="eyebrow" data-i18n="app.productEyebrow">AI platform operations</p>
+            <h1 data-i18n="app.title">Governance Control</h1>
+          </div>
+        </div>
+        <div class="topbar-status" aria-label="Environment and configuration" data-i18n-aria-label="app.environmentAndConfiguration">
+          <span class="environment-chip" data-i18n="app.environment">Local deterministic</span>
+          <span id="config-summary" class="config-summary" hidden></span>
+          <label class="language-control">
+            <span data-i18n="control.language">Language</span>
+            <select id="language-select" name="language">
+              <option value="en" data-i18n="locale.en">English</option>
+              <option value="ko" data-i18n="locale.ko">한국어</option>
+            </select>
+          </label>
+          <button id="refresh-button" class="icon-command" type="button" title="Refresh overview" aria-label="Refresh overview">
+            <span aria-hidden="true">↻</span>
+          </button>
+        </div>
+      </header>
+
+      <nav class="sidebar" aria-label="Primary" data-i18n-aria-label="navigation.primary">
+        <p class="nav-section-label" data-i18n="navigation.workspace">Workspace</p>
+        <ul id="primary-navigation" class="nav-list">
+          <li><a class="nav-link is-current" href="#overview" data-screen="overview" aria-current="page"><span aria-hidden="true">▦</span><span data-i18n="navigation.overview">Overview</span></a></li>
+          <li><a class="nav-link" href="#users-groups" data-screen="users-groups"><span aria-hidden="true">♙</span><span data-i18n="navigation.usersGroups">Users &amp; Groups</span></a></li>
+          <li><a class="nav-link" href="#budgets" data-screen="budgets"><span aria-hidden="true">◫</span><span data-i18n="navigation.budgets">Budgets</span></a></li>
+          <li><a class="nav-link" href="#usage" data-screen="usage"><span aria-hidden="true">◷</span><span data-i18n="navigation.usage">Usage</span></a></li>
+          <li><a class="nav-link" href="#models" data-screen="models"><span aria-hidden="true">◈</span><span data-i18n="navigation.models">Models</span></a></li>
+          <li><a class="nav-link" href="#fallback" data-screen="fallback"><span aria-hidden="true">↳</span><span data-i18n="navigation.fallback">Fallback</span></a></li>
+          <li><a class="nav-link" href="#lifecycle" data-screen="lifecycle"><span aria-hidden="true">◑</span><span data-i18n="navigation.lifecycle">Publishing</span></a></li>
+          <li><a class="nav-link" href="#notifications" data-screen="notifications"><span aria-hidden="true">✉</span><span data-i18n="navigation.notifications">Notifications</span></a></li>
+          <li><a class="nav-link" href="#audit" data-screen="audit"><span aria-hidden="true">⊞</span><span data-i18n="navigation.audit">Audit</span></a></li>
+        </ul>
+        <div class="sidebar-foot">
+          <p class="sidebar-foot-label" data-i18n="viewer.label">Demo persona</p>
+          <strong id="viewer-role" data-i18n="viewer.loading">Loading</strong>
+          <span id="membership-state" data-i18n="viewer.localFixture">Local fixture identity</span>
+        </div>
+      </nav>
+
+      <main id="main-content" tabindex="-1">
+        <div class="page-heading">
+          <div>
+            <p id="page-eyebrow" class="eyebrow" data-i18n="overview.eyebrow">Operational overview</p>
+            <h2 id="page-title" data-i18n="overview.title">Governance posture</h2>
+            <p id="page-description" data-i18n="app.description">Usage, policy health, data quality, and body-free activity for the selected scope.</p>
+          </div>
+          <div id="screen-toolbar" class="toolbar" aria-label="Overview filters" data-i18n-aria-label="overview.filters">
+            <label>
+              <span data-i18n="control.scope">Scope</span>
+              <select id="scope-select" name="scope">
+                <option value="self" data-i18n="scope.self">My usage</option>
+                <option value="team" data-i18n="scope.team">Team</option>
+                <option value="global" selected data-i18n="scope.global">Global</option>
+              </select>
+            </label>
+            <label id="range-control">
+              <span data-i18n="control.range">Range</span>
+              <select id="range-select" name="range">
+                <option value="24h" selected data-i18n="range.24h">Last 24 hours</option>
+                <option value="7d" data-i18n="range.7d">Last 7 days</option>
+                <option value="30d" data-i18n="range.30d">Last 30 days</option>
+              </select>
+            </label>
+            <label id="team-control" hidden>
+              <span data-i18n="control.team">Team</span>
+              <select id="team-select" name="team">
+                <option value="platform-engineering" selected data-i18n="directory.platform-engineering">Platform Engineering</option>
+                <option value="developer-experience" data-i18n="directory.developer-experience">Developer Experience</option>
+              </select>
+            </label>
+            <label id="directory-view-control" hidden>
+              <span data-i18n="control.view">View</span>
+              <select id="directory-view-select" name="view">
+                <option value="users" selected data-i18n="usersGroups.users">Users</option>
+                <option id="directory-view-groups-option" value="groups" data-i18n="usersGroups.groups">Groups</option>
+                <option id="directory-view-applications-option" value="applications" data-i18n="usersGroups.applications">Applications</option>
+              </select>
+            </label>
+            <label class="development-control">
+              <span data-i18n="control.fixture">Fixture</span>
+              <select id="fixture-select" name="fixture">
+                <option value="complete" selected data-i18n="fixture.complete">Complete</option>
+                <option id="stale-fixture-option" value="stale" data-i18n="fixture.stale">Stale</option>
+                <option id="partial-fixture-option" value="partial" data-i18n="fixture.partial">Partial</option>
+                <option id="empty-fixture-option" value="empty" data-i18n="fixture.empty">Empty</option>
+                <option id="ambiguous-fixture-option" value="ambiguous" data-i18n="fixture.ambiguous" hidden>Ambiguous membership</option>
+                <option id="degraded-fixture-option" value="degraded" data-i18n="fixture.degraded" hidden>Window not observed</option>
+                <option value="denied" data-i18n="fixture.denied">Denied</option>
+                <option value="error" data-i18n="fixture.error">Error</option>
+              </select>
+            </label>
+            <label class="development-control" id="source-control">
+              <span data-i18n="control.source">Source</span>
+              <select id="source-select" name="source">
+                <option value="fixture" selected data-i18n="source-option.fixture">Fixture</option>
+                <option value="rollup" data-i18n="source-option.rollup">Usage rollup</option>
+              </select>
+            </label>
+            <label class="development-control">
+              <span data-i18n="control.persona">Persona</span>
+              <select id="persona-select" name="persona">
+                <option value="governance-admin" selected data-i18n="persona.governance-admin">Governance Admin</option>
+                <option value="auditor" data-i18n="persona.auditor">Auditor</option>
+                <option value="end-user" data-i18n="persona.end-user">End User</option>
+              </select>
+            </label>
+          </div>
+        </div>
+
+        <section id="screen-state" class="screen-state" aria-live="polite" aria-atomic="true">
+          <div class="loading-line" aria-hidden="true"></div>
+          <p data-i18n="state.loading.title">Loading governance overview</p>
+        </section>
+
+        <div id="overview-content" hidden>
+          <section id="quality-banner" class="quality-banner" aria-labelledby="quality-title">
+            <div>
+              <p class="eyebrow" data-i18n="quality.eyebrow">Data quality</p>
+              <h3 id="quality-title" data-i18n="quality.waiting">Waiting for read model</h3>
+            </div>
+            <details>
+              <summary data-i18n="quality.details">Quality details</summary>
+              <dl id="quality-details" class="quality-details"></dl>
+            </details>
+          </section>
+
+          <section aria-labelledby="operating-state-title">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow" data-i18n="section.currentState">Current state</p>
+                <h3 id="operating-state-title" data-i18n="section.operatingPosture">Operating posture</h3>
+              </div>
+              <p id="updated-at" class="section-meta"></p>
+            </div>
+            <dl id="operating-state" class="operating-state"></dl>
+          </section>
+
+          <section aria-labelledby="metrics-title">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow" data-i18n="section.summary">Summary</p>
+                <h3 id="metrics-title" data-i18n="section.governanceSignals">Governance signals</h3>
+              </div>
+            </div>
+            <div id="metric-grid" class="metric-grid"></div>
+          </section>
+
+          <section aria-labelledby="models-title">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow" data-i18n="section.models">Models</p>
+                <h3 id="models-title" data-i18n="section.usageAndQuota">Usage and quota</h3>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <caption data-i18n="table.modelUsageCaption">Body-free model usage summary</caption>
+                <thead>
+                  <tr>
+                    <th scope="col" data-i18n="table.model">Model</th>
+                    <th scope="col" data-i18n="table.requests">Requests</th>
+                    <th scope="col" data-i18n="table.tokens">Tokens</th>
+                    <th scope="col" data-i18n="table.quota">Quota</th>
+                    <th scope="col" data-i18n="table.errors">Errors</th>
+                    <th scope="col" data-i18n="table.quality">Quality</th>
+                  </tr>
+                </thead>
+                <tbody id="model-usage-body"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <div class="two-column-band">
+            <section aria-labelledby="attention-title">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow" data-i18n="section.attention">Attention</p>
+                  <h3 id="attention-title" data-i18n="section.governanceQueue">Governance queue</h3>
+                </div>
+              </div>
+              <div id="attention-list" class="attention-list"></div>
+            </section>
+
+            <section aria-labelledby="activity-title">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow" data-i18n="section.auditPreview">Audit preview</p>
+                  <h3 id="activity-title" data-i18n="section.recentActivity">Recent body-free activity</h3>
+                </div>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <caption data-i18n="table.activityCaption">Recent governed requests without message bodies</caption>
+                  <thead>
+                    <tr>
+                      <th scope="col" data-i18n="table.request">Request</th>
+                      <th scope="col" data-i18n="table.scope">Scope</th>
+                      <th scope="col" data-i18n="table.model">Model</th>
+                      <th scope="col" data-i18n="table.outcome">Outcome</th>
+                    </tr>
+                  </thead>
+                  <tbody id="activity-body"></tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+        </div>
+
+        <div id="users-groups-content" hidden>
+          <section id="directory-quality-banner" class="quality-banner directory-reading-panel" aria-labelledby="directory-quality-title">
+            <div>
+              <p class="eyebrow" data-i18n="quality.eyebrow">Data quality</p>
+              <h3 id="directory-quality-title" data-i18n="quality.waiting">Waiting for read model</h3>
+            </div>
+            <details>
+              <summary data-i18n="quality.details">Quality details</summary>
+              <dl id="directory-quality-details" class="quality-details"></dl>
+            </details>
+          </section>
+
+          <section class="directory-reading-panel" aria-labelledby="directory-summary-title">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow" data-i18n="usersGroups.directoryEyebrow">Directory projection</p>
+                <h3 id="directory-summary-title" data-i18n="usersGroups.summary">Visible access summary</h3>
+              </div>
+              <span class="read-only-label" data-i18n="usersGroups.readOnly">Read-only</span>
+            </div>
+            <div id="directory-summary-grid" class="directory-summary-grid"></div>
+          </section>
+
+          <section id="access-edit" class="quality-banner authoring-panel" aria-labelledby="access-edit-title" hidden>
+            <div>
+              <p class="eyebrow" data-i18n="accessEdit.eyebrow">Proposing a change</p>
+              <h2 id="access-edit-title" data-i18n="accessEdit.title">Change who may use what</h2>
+              <p id="access-edit-help" class="policy-meta" data-i18n="accessEdit.help">This becomes a draft revision. Nothing changes for callers until it is approved and published.</p>
+              <label id="access-edit-binding-label" for="access-edit-binding" data-i18n="accessEdit.bindingLabel">Entitlement</label>
+              <select id="access-edit-binding" aria-describedby="access-edit-help access-edit-error"></select>
+              <p id="access-edit-state" class="policy-meta"></p>
+              <label id="access-edit-models-label" for="access-edit-models" data-i18n="accessEdit.modelsLabel">Models this entitlement allows</label>
+              <select id="access-edit-models" multiple size="3" aria-describedby="access-edit-help access-edit-error"></select>
+              <label for="access-edit-rpm" data-i18n="entitlementLimits.rpmLabel">Requests per minute</label>
+              <input id="access-edit-rpm" type="number" min="0" step="1" inputmode="numeric" aria-describedby="entitlement-limits-help access-edit-error">
+              <label for="access-edit-tpm" data-i18n="entitlementLimits.tpmLabel">Tokens per minute</label>
+              <input id="access-edit-tpm" type="number" min="0" step="1" inputmode="numeric" aria-describedby="entitlement-limits-help access-edit-error">
+              <label for="access-edit-quota" data-i18n="entitlementLimits.quotaLabel">Token quota</label>
+              <input id="access-edit-quota" type="number" min="1" step="1" inputmode="numeric" aria-describedby="entitlement-limits-help access-edit-error">
+              <label for="access-edit-period" data-i18n="entitlementLimits.periodLabel">Quota period</label>
+              <select id="access-edit-period" aria-describedby="entitlement-limits-help access-edit-error"></select>
+              <p id="entitlement-limits-help" class="policy-meta" data-i18n="entitlementLimits.help">Blank fields add no limit. An existing limit must be changed, not cleared.</p>
+              <p class="policy-meta" data-i18n="accessEdit.retirementHelp">Retiring sets the entitlement state to revoked after publication. It keeps history and the original grant reason. The organization ceiling cannot be retired.</p>
+              <label id="access-edit-assignment-label" for="access-edit-assignment" data-i18n="accessEdit.assignmentLabel">Role assignment</label>
+              <select id="access-edit-assignment" aria-describedby="access-edit-help access-edit-error"></select>
+              <label id="access-edit-reason-label" for="access-edit-reason" data-i18n="accessEdit.reasonLabel">Reason for revoking</label>
+              <select id="access-edit-reason" aria-describedby="access-edit-help access-edit-error"></select>
+              <p id="access-edit-error" class="policy-meta" role="alert"></p>
+              <div id="access-edit-actions"></div>
+            </div>
+          </section>
+
+          <section id="subject-add" class="quality-banner authoring-panel" aria-labelledby="subject-add-title" hidden>
+            <div>
+              <p class="eyebrow" data-i18n="subjectAdd.eyebrow">Proposing a change</p>
+              <h2 id="subject-add-title" data-i18n="subjectAdd.title">Add an entitlement</h2>
+              <p id="subject-add-help" class="policy-meta" data-i18n="subjectAdd.help">Add a person, application, or existing governed team. This becomes a draft revision.</p>
+              <label for="subject-add-kind" data-i18n="subjectAdd.kindLabel">Target type</label>
+              <select id="subject-add-kind" aria-describedby="subject-add-help subject-add-error"></select>
+              <label for="subject-add-id" data-i18n="subjectAdd.idLabel">Entitlement identifier</label>
+              <input id="subject-add-id" type="text" autocomplete="off" aria-describedby="subject-add-help subject-add-error">
+              <label for="subject-add-key" data-i18n="subjectAdd.keyLabel">Target identifier</label>
+              <input id="subject-add-key" type="text" autocomplete="off" aria-describedby="subject-add-help subject-add-error">
+              <label for="subject-add-team" data-i18n="subjectAdd.teamLabel">Governed team</label>
+              <select id="subject-add-team" aria-describedby="subject-add-help subject-add-error"></select>
+              <label for="subject-add-models" data-i18n="subjectAdd.modelsLabel">Models this entitlement allows</label>
+              <select id="subject-add-models" multiple size="3" aria-describedby="subject-add-help subject-add-error"></select>
+              <label for="subject-add-rpm" data-i18n="entitlementLimits.rpmLabel">Requests per minute</label>
+              <input id="subject-add-rpm" type="number" min="0" step="1" inputmode="numeric" aria-describedby="entitlement-limits-help subject-add-error">
+              <label for="subject-add-tpm" data-i18n="entitlementLimits.tpmLabel">Tokens per minute</label>
+              <input id="subject-add-tpm" type="number" min="0" step="1" inputmode="numeric" aria-describedby="entitlement-limits-help subject-add-error">
+              <label for="subject-add-quota" data-i18n="entitlementLimits.quotaLabel">Token quota</label>
+              <input id="subject-add-quota" type="number" min="1" step="1" inputmode="numeric" aria-describedby="entitlement-limits-help subject-add-error">
+              <label for="subject-add-period" data-i18n="entitlementLimits.periodLabel">Quota period</label>
+              <select id="subject-add-period" aria-describedby="entitlement-limits-help subject-add-error"></select>
+              <label for="subject-add-reason" data-i18n="subjectAdd.reasonLabel">Reason</label>
+              <select id="subject-add-reason" aria-describedby="subject-add-help subject-add-error"></select>
+              <p id="subject-add-error" class="policy-meta" role="alert"></p>
+              <div id="subject-add-actions"></div>
+            </div>
+          </section>
+
+          <section id="assignment-add" class="quality-banner authoring-panel" aria-labelledby="assignment-add-title" hidden>
+            <div>
+              <p class="eyebrow" data-i18n="assignmentAdd.eyebrow">Proposing a change</p>
+              <h2 id="assignment-add-title" data-i18n="assignmentAdd.title">Grant a governance-policy role</h2>
+              <p id="assignment-add-help" class="policy-meta" data-i18n="assignmentAdd.help">This edits the versioned governance-policy assignment snapshot. It does not assign Microsoft Entra app roles or grant deployed console or API access. The role and scope are validated together, and the change becomes a draft revision.</p>
+              <label for="assignment-add-id" data-i18n="assignmentAdd.idLabel">Assignment identifier</label>
+              <input id="assignment-add-id" type="text" autocomplete="off" aria-describedby="assignment-add-help assignment-add-error">
+              <label for="assignment-add-role" data-i18n="assignmentAdd.roleLabel">Role</label>
+              <select id="assignment-add-role" aria-describedby="assignment-add-help assignment-add-error"></select>
+              <label for="assignment-add-assignee-kind" data-i18n="assignmentAdd.assigneeKindLabel">Assignee type</label>
+              <select id="assignment-add-assignee-kind" aria-describedby="assignment-add-help assignment-add-error"></select>
+              <label for="assignment-add-assignee-key" data-i18n="assignmentAdd.assigneeKeyLabel">Assignee identifier</label>
+              <input id="assignment-add-assignee-key" type="text" autocomplete="off" aria-describedby="assignment-add-help assignment-add-error">
+              <label for="assignment-add-scope-kind" data-i18n="assignmentAdd.scopeKindLabel">Scope</label>
+              <select id="assignment-add-scope-kind" aria-describedby="assignment-add-help assignment-add-error"></select>
+              <label for="assignment-add-scope-key" data-i18n="assignmentAdd.scopeKeyLabel">Team</label>
+              <select id="assignment-add-scope-key" aria-describedby="assignment-add-help assignment-add-error"></select>
+              <label for="assignment-add-reason" data-i18n="assignmentAdd.reasonLabel">Reason</label>
+              <input id="assignment-add-reason" type="text" autocomplete="off" value="delegated-team-administration" aria-describedby="assignment-add-help assignment-add-error">
+              <p id="assignment-add-error" class="policy-meta" role="alert"></p>
+              <div id="assignment-add-actions"></div>
+            </div>
+          </section>
+
+          <section id="team-edit" class="quality-banner authoring-panel" aria-labelledby="team-edit-title" hidden>
+            <div>
+              <p class="eyebrow" data-i18n="teamEdit.eyebrow">Proposing a change</p>
+              <h2 id="team-edit-title" data-i18n="teamEdit.title">Which directory group is which team</h2>
+              <p id="team-edit-help" class="policy-meta" data-i18n="teamEdit.help">Who belongs to a group is changed in the directory. This decides which groups this product governs as teams.</p>
+              <label for="team-edit-key" data-i18n="teamEdit.keyLabel">Team name</label>
+              <input id="team-edit-key" type="text" autocomplete="off" aria-describedby="team-edit-help team-edit-error">
+              <label for="team-edit-group" data-i18n="teamEdit.groupLabel">Directory group</label>
+              <input id="team-edit-group" type="text" autocomplete="off" aria-describedby="team-edit-help team-edit-error">
+              <label for="team-edit-existing" data-i18n="teamEdit.existingLabel">Team to remove</label>
+              <select id="team-edit-existing" aria-describedby="team-edit-help team-edit-error"></select>
+              <label for="team-edit-reason" data-i18n="teamEdit.reasonLabel">Reason for removing</label>
+              <select id="team-edit-reason" aria-describedby="team-edit-help team-edit-error"></select>
+              <p id="team-edit-error" class="policy-meta" role="alert"></p>
+              <div id="team-edit-actions"></div>
+            </div>
+          </section>
+
+          <section class="directory-reading-panel" aria-labelledby="directory-table-title">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow" data-i18n="usersGroups.policyEyebrow">Policy inspection</p>
+                <h3 id="directory-table-title" data-i18n="usersGroups.effectiveAccess">Direct, inherited, and effective access</h3>
+              </div>
+              <p id="directory-updated-at" class="section-meta"></p>
+            </div>
+            <div class="table-wrap directory-table-wrap">
+              <table class="directory-table">
+                <caption id="directory-table-caption" data-i18n="usersGroups.usersCaption">Scope-filtered users and their policy outcomes</caption>
+                <thead>
+                  <tr>
+                    <th scope="col" data-i18n="table.identity">Identity</th>
+                    <th scope="col" data-i18n="table.state">State</th>
+                    <th scope="col" data-i18n="table.relations">Relations</th>
+                    <th scope="col" data-i18n="table.effectiveAccess">Effective access</th>
+                    <th scope="col" data-i18n="table.policyDetails">Policy details</th>
+                  </tr>
+                </thead>
+                <tbody id="directory-table-body"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+
+        <div id="budgets-content" hidden>
+          <section id="budgets-quality-banner" class="quality-banner" aria-labelledby="budgets-quality-title">
+            <div>
+              <p class="eyebrow" data-i18n="budgets.qualityEyebrow">Publication quality</p>
+              <h2 id="budgets-quality-title" data-i18n="budgets.qualityTitle">Budget publication</h2>
+            </div>
+            <dl id="budgets-quality-details" class="quality-details"></dl>
+          </section>
+
+          <section aria-labelledby="model-selection-title">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow" data-i18n="budgets.modelSelectionEyebrow">Model selection</p>
+                <h3 id="model-selection-title" data-i18n="budgets.modelSelection">What pressure does to the model</h3>
+              </div>
+              <span class="read-only-label" data-i18n="budgets.readOnly">Read-only</span>
+            </div>
+            <div id="model-selection-grid" class="directory-summary-grid"></div>
+          </section>
+
+          <section id="budget-edit" class="quality-banner authoring-panel" aria-labelledby="budget-edit-title" hidden>
+            <div>
+              <p id="budget-edit-eyebrow" class="eyebrow" data-i18n="budgetEdit.eyebrow">Proposing a change</p>
+              <h2 id="budget-edit-title" data-i18n="budgetEdit.title">Change a budget</h2>
+              <p id="budget-edit-subject" class="policy-meta"></p>
+              <p id="budget-edit-help" class="policy-meta" data-i18n="budgetEdit.help">This becomes a draft revision. Nothing changes for callers until it is approved and published.</p>
+              <label id="budget-edit-label" for="budget-edit-amount" data-i18n="budgetEdit.amountLabel">Configured limit</label>
+              <input id="budget-edit-amount" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" maxlength="18" aria-describedby="budget-edit-help budget-edit-error" />
+              <label for="budget-edit-scope" data-i18n="budgetEdit.scopeLabel">Applies to (cannot be changed)</label>
+              <input id="budget-edit-scope" type="text" disabled />
+              <label for="budget-edit-model-scope" data-i18n="budgetAuthoring.modelScopeLabel">Model coverage</label>
+              <select id="budget-edit-model-scope" aria-describedby="budget-edit-help budget-edit-error"></select>
+              <label for="budget-edit-model-key" data-i18n="budgetAuthoring.modelKeyLabel">Model</label>
+              <select id="budget-edit-model-key" aria-describedby="budget-edit-help budget-edit-error"></select>
+              <label for="budget-edit-period" data-i18n="budgetAuthoring.periodLabel">Period</label>
+              <select id="budget-edit-period" aria-describedby="budget-edit-help budget-edit-error"></select>
+              <label for="budget-edit-action" data-i18n="budgetAdd.actionLabel">When the cap is reached</label>
+              <select id="budget-edit-action" aria-describedby="budget-edit-help budget-edit-error"></select>
+              <div id="budget-edit-thresholds"></div>
+              <p id="budget-edit-error" class="policy-meta" role="alert"></p>
+              <div id="budget-edit-actions"></div>
+            </div>
+          </section>
+
+          <section id="budget-add" class="quality-banner authoring-panel" aria-labelledby="budget-add-title" hidden>
+            <div>
+              <p class="eyebrow" data-i18n="budgetAdd.eyebrow">Proposing a change</p>
+              <h2 id="budget-add-title" data-i18n="budgetAdd.title">Add a budget</h2>
+              <p id="budget-add-help" class="policy-meta" data-i18n="budgetAdd.help">This becomes a draft revision. Nothing changes for callers until it is approved and published.</p>
+              <label for="budget-add-scope" data-i18n="budgetAdd.scopeLabel">Applies to</label>
+              <select id="budget-add-scope" aria-describedby="budget-add-help budget-add-error"></select>
+              <label for="budget-add-model-scope" data-i18n="budgetAuthoring.modelScopeLabel">Model coverage</label>
+              <select id="budget-add-model-scope" aria-describedby="budget-add-help budget-add-error"></select>
+              <label for="budget-add-model-key" data-i18n="budgetAuthoring.modelKeyLabel">Model</label>
+              <select id="budget-add-model-key" aria-describedby="budget-add-help budget-add-error"></select>
+              <label for="budget-add-period" data-i18n="budgetAuthoring.periodLabel">Period</label>
+              <select id="budget-add-period" aria-describedby="budget-add-help budget-add-error"></select>
+              <label for="budget-add-action" data-i18n="budgetAdd.actionLabel">When the cap is reached</label>
+              <select id="budget-add-action" aria-describedby="budget-add-help budget-add-error"></select>
+              <label for="budget-add-amount" data-i18n="budgetAdd.amountLabel">Configured limit in tokens</label>
+              <input id="budget-add-amount" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" maxlength="18" aria-describedby="budget-add-help budget-add-error" />
+              <div id="budget-add-thresholds"></div>
+              <label for="budget-add-target" data-i18n="budgetAdd.targetLabel">Budget to remove</label>
+              <select id="budget-add-target" aria-describedby="budget-add-help budget-add-error"></select>
+              <label for="budget-add-reason" data-i18n="budgetAdd.reasonLabel">Reason for removing</label>
+              <select id="budget-add-reason" aria-describedby="budget-add-help budget-add-error"></select>
+              <p id="budget-add-error" class="policy-meta" role="alert"></p>
+              <div id="budget-add-actions"></div>
+            </div>
+          </section>
+
+          <section aria-labelledby="budgets-table-title">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow" data-i18n="budgets.tableEyebrow">Configured and enforced</p>
+                <h3 id="budgets-table-title" data-i18n="budgets.tableTitle">Budgets and derived quotas</h3>
+              </div>
+              <p id="budgets-updated-at" class="section-meta"></p>
+            </div>
+            <div class="table-wrap directory-table-wrap">
+              <table class="directory-table">
+                <caption id="budgets-table-caption" data-i18n="budgets.caption">Scope-filtered budgets with the quota each one actually enforces</caption>
+                <thead>
+                  <tr>
+                    <th scope="col" data-i18n="table.budget">Budget</th>
+                    <th scope="col" data-i18n="table.action">Action</th>
+                    <th scope="col" data-i18n="table.configuredLimit">Configured</th>
+                    <th scope="col" data-i18n="table.enforcedQuota">Enforced quota</th>
+                    <th scope="col" data-i18n="table.consumption">Used this period</th>
+                    <th scope="col" data-i18n="table.derivation">Derivation</th>
+                    <th scope="col" data-i18n="table.budgetActions">Change</th>
+                  </tr>
+                </thead>
+                <tbody id="budgets-table-body"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+
+        <div id="usage-content" hidden>
+          <section id="usage-quality-banner" class="quality-banner" aria-labelledby="usage-quality-title">
+            <div>
+              <p class="eyebrow" data-i18n="usage.qualityEyebrow">Window quality</p>
+              <h2 id="usage-quality-title" data-i18n="usage.qualityTitle">Observation window</h2>
+            </div>
+            <dl id="usage-quality-details" class="quality-details"></dl>
+          </section>
+
+          <section aria-labelledby="usage-summary-title">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow" data-i18n="usage.summaryEyebrow">Visible totals</p>
+                <h3 id="usage-summary-title" data-i18n="usage.summaryTitle">What this scope consumed</h3>
+              </div>
+              <span class="read-only-label" data-i18n="usage.readOnly">Read-only</span>
+            </div>
+            <div id="usage-summary-grid" class="directory-summary-grid"></div>
+          </section>
+
+          <section aria-labelledby="usage-table-title">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow" data-i18n="usage.tableEyebrow">Requests and tokens</p>
+                <h3 id="usage-table-title" data-i18n="usage.tableTitle">Usage by user or group</h3>
+              </div>
+              <p id="usage-updated-at" class="section-meta"></p>
+            </div>
+            <div class="table-wrap directory-table-wrap">
+              <table class="directory-table">
+                <caption id="usage-table-caption" data-i18n="usage.caption">Scope-filtered usage aggregates; no prompt or completion text is returned</caption>
+                <thead>
+                  <tr>
+                    <th scope="col" data-i18n="table.entity">User or group</th>
+                    <th scope="col" data-i18n="table.requests">Requests</th>
+                    <th scope="col" data-i18n="table.tokens">Tokens</th>
+                    <th scope="col" data-i18n="table.models">Models</th>
+                    <th scope="col" data-i18n="table.quality">Quality</th>
+                  </tr>
+                </thead>
+                <tbody id="usage-table-body"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+
+        <div id="models-content" hidden>
+          <section id="model-add" class="quality-banner authoring-panel" aria-labelledby="model-add-title" hidden>
+            <div>
+              <p class="eyebrow" data-i18n="modelAdd.eyebrow">Bringing a model under governance</p>
+              <h2 id="model-add-title" data-i18n="modelAdd.title">Add or remove a model</h2>
+              <p id="model-add-help" class="policy-meta" data-i18n="modelAdd.help">Everything the catalogue keeps is read from the deployment itself, so there is nothing here to type. A model must be entitled to nobody before it can be removed.</p>
+              <label for="model-add-deployment" data-i18n="modelAdd.deploymentLabel">Deployment to bring under governance</label>
+              <select id="model-add-deployment" aria-describedby="model-add-help model-add-error"></select>
+              <label for="model-add-target" data-i18n="modelAdd.targetLabel">Model to remove</label>
+              <select id="model-add-target" aria-describedby="model-add-help model-add-error"></select>
+              <label for="model-add-reason" data-i18n="modelAdd.reasonLabel">Reason for removing</label>
+              <select id="model-add-reason" aria-describedby="model-add-help model-add-error"></select>
+              <p id="model-add-error" class="policy-meta" role="alert"></p>
+              <div id="model-add-actions"></div>
+            </div>
+          </section>
+
+          <section id="models-quality-banner" class="quality-banner" aria-labelledby="models-quality-title">
+            <div>
+              <p class="eyebrow" data-i18n="models.qualityEyebrow">Catalogue quality</p>
+              <h2 id="models-quality-title" data-i18n="models.qualityTitle">Model catalogue</h2>
+            </div>
+            <dl id="models-quality-details" class="quality-details"></dl>
+          </section>
+
+          <section aria-labelledby="models-table-title">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow" data-i18n="models.tableEyebrow">Catalogue and consumption</p>
+                <h3 id="models-table-title" data-i18n="models.tableTitle">Models, the capacity allocated to them, and what they served</h3>
+              </div>
+              <p id="models-updated-at" class="section-meta"></p>
+            </div>
+            <div class="table-wrap directory-table-wrap">
+              <table class="directory-table">
+                <caption id="models-table-caption" data-i18n="models.caption">Registered models with the capacity allocated to them and the traffic this scope is permitted to see</caption>
+                <thead>
+                  <tr>
+                    <th scope="col" data-i18n="table.model">Model</th>
+                    <th scope="col" data-i18n="table.capability">Capability</th>
+                    <th scope="col" data-i18n="table.internalLimits">Internal limits</th>
+                    <th scope="col" data-i18n="table.providerAllocation">Provider allocation</th>
+                    <th scope="col" data-i18n="table.consumption">Actual usage</th>
+                  </tr>
+                </thead>
+                <tbody id="models-table-body"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section id="model-prices" aria-labelledby="model-prices-title">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow" data-i18n="modelPrices.eyebrow">Reference only</p>
+                <h3 id="model-prices-title" data-i18n="modelPrices.title">What Azure publishes for these models</h3>
+                <p class="policy-meta" data-i18n="modelPrices.note">Nothing here is enforced or converted. These are the meters as Azure publishes them; what a period actually cost is answered by Azure Billing.</p>
+                <p class="policy-meta">
+                  <a href="https://azure.microsoft.com/pricing/details/ai-foundry/" rel="noreferrer noopener" target="_blank" data-i18n="modelPrices.pricingLink">Azure AI Foundry pricing</a>
+                  <span aria-hidden="true"> · </span>
+                  <a href="https://portal.azure.com/#view/Microsoft_Azure_CostManagement/Menu/~/costanalysis" rel="noreferrer noopener" target="_blank" data-i18n="modelPrices.billingLink">Cost analysis in the Azure portal</a>
+                </p>
+              </div>
+              <div id="model-prices-actions"></div>
+            </div>
+            <div id="model-prices-body" hidden></div>
+          </section>
+        </div>
+
+        <div id="fallback-content" hidden>
+          <section id="fallback-edit" class="quality-banner authoring-panel" aria-labelledby="fallback-edit-title" hidden>
+            <div>
+              <p class="eyebrow" data-i18n="fallbackEdit.eyebrow">Proposing a change</p>
+              <h2 id="fallback-edit-title" data-i18n="fallbackEdit.title">Change the existing fallback plan</h2>
+              <p id="fallback-edit-help" class="policy-meta" data-i18n="fallbackEdit.help">Replace this plan's complete set of one-hop model connections or change its request settings. Plan identity, scope, issuer, and validity stay unchanged. This becomes a draft revision.</p>
+              <label for="fallback-edit-enabled" data-i18n="fallbackEdit.enabledLabel">Ladder</label>
+              <select id="fallback-edit-enabled" aria-describedby="fallback-edit-help fallback-edit-error"></select>
+              <label for="fallback-edit-intent" data-i18n="fallbackEdit.intentLabel">What a request gets</label>
+              <select id="fallback-edit-intent" aria-describedby="fallback-edit-help fallback-edit-error"></select>
+              <label for="fallback-edit-notice" data-i18n="fallbackEdit.noticeLabel">How a substitution is announced</label>
+              <select id="fallback-edit-notice" aria-describedby="fallback-edit-help fallback-edit-error"></select>
+              <fieldset class="fallback-edge-editor" aria-describedby="fallback-edit-edges-help fallback-edit-error">
+                <legend data-i18n="fallbackEdit.edgesLabel">Model connections</legend>
+                <p id="fallback-edit-edges-help" class="policy-meta" data-i18n="fallbackEdit.edgesHelp">Each source may point to one target. Saving replaces the complete connection set. Candidate previews below apply only to the displayed caller and API family; selectors list the full registered model catalogue.</p>
+                <div id="fallback-edit-edge-list"></div>
+                <button id="fallback-edit-add-edge" class="row-command" type="button" data-i18n="fallbackEdit.addEdge">Add connection</button>
+              </fieldset>
+              <p id="fallback-edit-error" class="policy-meta" role="alert"></p>
+              <div id="fallback-edit-actions"></div>
+            </div>
+          </section>
+
+          <section id="fallback-quality-banner" class="quality-banner" aria-labelledby="fallback-quality-title">
+            <div>
+              <p class="eyebrow" data-i18n="fallback.qualityEyebrow">Plan validity</p>
+              <h2 id="fallback-quality-title" data-i18n="fallback.qualityTitle">Authored plan</h2>
+            </div>
+            <dl id="fallback-quality-details" class="quality-details"></dl>
+          </section>
+
+          <section aria-labelledby="fallback-decision-title">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow" data-i18n="fallback.decisionEyebrow">What happens to a request</p>
+                <h3 id="fallback-decision-title" data-i18n="fallback.decisionTitle">Requested and effective model</h3>
+              </div>
+              <span class="read-only-label" data-i18n="fallback.readOnly">Read-only</span>
+            </div>
+            <div id="fallback-decision-grid" class="directory-summary-grid"></div>
+          </section>
+
+          <section aria-labelledby="fallback-hops-title">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow" data-i18n="fallback.hopsEyebrow">Authored and compiled</p>
+                <h3 id="fallback-hops-title" data-i18n="fallback.hopsTitle">Each hop, and whether this caller may take it</h3>
+              </div>
+              <p id="fallback-updated-at" class="section-meta"></p>
+            </div>
+            <div class="table-wrap directory-table-wrap">
+              <table class="directory-table">
+                <caption id="fallback-table-caption" data-i18n="fallback.caption">Authored downgrade hops with the rule that permitted or refused each one</caption>
+                <thead>
+                  <tr>
+                    <th scope="col" data-i18n="table.hop">Hop</th>
+                    <th scope="col" data-i18n="table.hopOutcome">Outcome</th>
+                    <th scope="col" data-i18n="table.hopRule">Deciding rule</th>
+                  </tr>
+                </thead>
+                <tbody id="fallback-table-body"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section aria-labelledby="fallback-candidates-title">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow" data-i18n="fallback.candidatesEyebrow">What could be authored next</p>
+                <h3 id="fallback-candidates-title" data-i18n="fallback.candidatesTitle">Targets available to each source model</h3>
+              </div>
+              <span class="read-only-label" data-i18n="fallback.readOnly">Read-only</span>
+            </div>
+            <p class="policy-meta" data-i18n="fallback.candidatesHelp">Judged by the same rules that will judge a hop when it runs, and per wire contract, because a target valid on one route is not valid on another.</p>
+            <dl id="fallback-candidates" class="quality-details"></dl>
+          </section>
+        </div>
+
+        <div id="lifecycle-content" hidden>
+          <section id="lifecycle-quality-banner" class="quality-banner" aria-labelledby="lifecycle-quality-title">
+            <div>
+              <p class="eyebrow" data-i18n="lifecycle.qualityEyebrow">Serving now</p>
+              <h2 id="lifecycle-quality-title" data-i18n="lifecycle.qualityTitle">Active configuration</h2>
+            </div>
+            <dl id="lifecycle-quality-details" class="quality-details"></dl>
+          </section>
+
+          <section id="lifecycle-conflict" class="quality-banner" aria-labelledby="lifecycle-conflict-title" aria-live="assertive" hidden>
+            <div>
+              <p id="lifecycle-conflict-eyebrow" class="eyebrow" data-i18n="conflict.eyebrow">Someone else saved first</p>
+              <h2 id="lifecycle-conflict-title" data-i18n="conflict.title">This would be applied on top of changes you have not seen</h2>
+              <div id="lifecycle-conflict-detail"></div>
+              <div id="lifecycle-conflict-actions"></div>
+            </div>
+          </section>
+
+          <section id="lifecycle-reason" class="quality-banner" aria-labelledby="lifecycle-reason-title" hidden>
+            <div>
+              <p id="lifecycle-reason-eyebrow" class="eyebrow" data-i18n="reason.eyebrow">Recording a failure</p>
+              <h2 id="lifecycle-reason-title" data-i18n="reason.title">Choose what failed</h2>
+              <p id="lifecycle-reason-help" class="policy-meta" data-i18n="reason.help">This is written into the audit record, so it is chosen from the reasons this product defines rather than typed.</p>
+              <label id="lifecycle-reason-label" for="lifecycle-reason-input" data-i18n="reason.label">Why it failed</label>
+              <select id="lifecycle-reason-input" aria-describedby="lifecycle-reason-help lifecycle-reason-error"></select>
+              <p id="lifecycle-reason-error" class="policy-meta" role="alert"></p>
+              <div id="lifecycle-reason-actions"></div>
+            </div>
+          </section>
+
+          <section aria-labelledby="lifecycle-table-title">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow" data-i18n="lifecycle.tableEyebrow">Draft to active</p>
+                <h3 id="lifecycle-table-title" data-i18n="lifecycle.tableTitle">Revisions and what can be done next</h3>
+              </div>
+              <p id="lifecycle-updated-at" class="section-meta"></p>
+            </div>
+            <div class="table-wrap directory-table-wrap">
+              <table class="directory-table">
+                <caption id="lifecycle-table-caption" data-i18n="lifecycle.caption">Configuration revisions with their publication targets and recoverable actions</caption>
+                <thead>
+                  <tr>
+                    <th scope="col" data-i18n="table.revision">Revision</th>
+                    <th scope="col" data-i18n="table.lifecycleState">State</th>
+                    <th scope="col" data-i18n="table.approval">Authored and approved</th>
+                    <th scope="col" data-i18n="table.publishTargets">Publication targets</th>
+                    <th scope="col" data-i18n="table.nextActions">Available next</th>
+                  </tr>
+                </thead>
+                <tbody id="lifecycle-table-body"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+
+        <div id="notifications-content" hidden>
+          <section id="channel-edit" class="quality-banner authoring-panel" aria-labelledby="channel-edit-title" hidden>
+            <div>
+              <p class="eyebrow" data-i18n="channelEdit.eyebrow">Where these are sent</p>
+              <h2 id="channel-edit-title" data-i18n="channelEdit.title">Delivery channel</h2>
+              <p id="channel-edit-help" class="policy-meta" data-i18n="channelEdit.help">The address is stored and never shown again. Only the host is displayed, so you can tell which channel is configured.</p>
+              <p id="channel-edit-current" class="policy-meta"></p>
+              <label for="channel-edit-kind" data-i18n="channelEdit.kindLabel">Channel</label>
+              <select id="channel-edit-kind" aria-describedby="channel-edit-help channel-edit-error"></select>
+              <label for="channel-edit-endpoint" data-i18n="channelEdit.endpointLabel">Webhook address</label>
+              <input id="channel-edit-endpoint" type="url" autocomplete="off" spellcheck="false" maxlength="2048" aria-describedby="channel-edit-help channel-edit-error" />
+              <p id="channel-edit-error" class="policy-meta" role="alert"></p>
+              <div id="channel-edit-actions"></div>
+            </div>
+          </section>
+
+          <section id="notifications-quality-banner" class="quality-banner" aria-labelledby="notifications-quality-title">
+            <div>
+              <p class="eyebrow" data-i18n="notifications.qualityEyebrow">Outstanding work</p>
+              <h2 id="notifications-quality-title" data-i18n="notifications.qualityTitle">Delivery status</h2>
+            </div>
+            <dl id="notifications-quality-details" class="quality-details"></dl>
+          </section>
+
+          <section aria-labelledby="notifications-table-title">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow" data-i18n="notifications.tableEyebrow">What was raised</p>
+                <h3 id="notifications-table-title" data-i18n="notifications.tableTitle">Notifications and what happened to them</h3>
+              </div>
+              <p id="notifications-updated-at" class="section-meta"></p>
+            </div>
+            <div class="table-wrap directory-table-wrap">
+              <table class="directory-table">
+                <caption id="notifications-table-caption" data-i18n="notifications.caption">Governance notifications with the scope they apply to, delivery attempts, retry schedule, and acknowledgement</caption>
+                <thead>
+                  <tr>
+                    <th scope="col" data-i18n="table.notificationEvent">Event</th>
+                    <th scope="col" data-i18n="table.notificationScope">Applies to</th>
+                    <th scope="col" data-i18n="table.notificationDelivery">Delivery</th>
+                    <th scope="col" data-i18n="table.notificationAcknowledgement">Acknowledgement</th>
+                  </tr>
+                </thead>
+                <tbody id="notifications-table-body"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+
+        <div id="audit-content" hidden>
+          <section id="audit-quality-banner" class="quality-banner" aria-labelledby="audit-quality-title">
+            <div>
+              <p class="eyebrow" data-i18n="audit.qualityEyebrow">What this covers</p>
+              <h2 id="audit-quality-title" data-i18n="audit.qualityTitle">Change history</h2>
+            </div>
+            <dl id="audit-quality-details" class="quality-details"></dl>
+          </section>
+
+          <section aria-labelledby="audit-export-title">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow" data-i18n="audit.exportEyebrow">Taking a copy away</p>
+                <h3 id="audit-export-title" data-i18n="audit.exportTitle">Export</h3>
+              </div>
+              <span class="read-only-label" data-i18n="audit.readOnly">Read-only</span>
+            </div>
+            <div id="audit-export-grid" class="directory-summary-grid"></div>
+          </section>
+
+          <section aria-labelledby="audit-table-title">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow" data-i18n="audit.tableEyebrow">Every governance source</p>
+                <h3 id="audit-table-title" data-i18n="audit.tableTitle">What changed</h3>
+              </div>
+              <p id="audit-updated-at" class="section-meta"></p>
+            </div>
+            <div class="table-wrap directory-table-wrap">
+              <table class="directory-table">
+                <caption id="audit-table-caption" data-i18n="audit.caption">Governance changes with actor, version, reason, and the configuration they were made under</caption>
+                <thead>
+                  <tr>
+                    <th scope="col" data-i18n="table.auditRecord">Change</th>
+                    <th scope="col" data-i18n="table.auditActor">Actor</th>
+                    <th scope="col" data-i18n="table.auditReason">Reason and version</th>
+                    <th scope="col" data-i18n="table.auditEvidence">Evidence</th>
+                  </tr>
+                </thead>
+                <tbody id="audit-table-body"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </main>
+    </div>
+    <script type="module" src="/app.mjs"></script>
+  </body>
+</html>

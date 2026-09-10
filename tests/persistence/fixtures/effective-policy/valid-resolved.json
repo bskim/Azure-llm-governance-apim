@@ -1,0 +1,67 @@
+{
+  "contractVersion": "v1",
+  "documentType": "effective-policy",
+  "id": "effective-policy|team-platform|pk-8f3a2c91d4e6b705",
+  "scopeGroupId": "team-platform",
+  "principalKey": "pk-8f3a2c91d4e6b705",
+  "configVersion": 12,
+  "resolution": "resolved",
+  "resolvedAt": "2026-08-04T00:00:00.000Z",
+  "expiresAt": "2026-08-04T00:01:00.000Z",
+  "attribution": {
+    "subjectKey": "sk1-3xQm7pR2vLnB8dKfWzYtHcJa9SgUeNiOw0",
+    "applicationKey": "ak1-Zt4Lm9QbXe2RvNc7YuHpKdSaJf0WgTiOx1",
+    "teamKey": "team-platform"
+  },
+  "allowedModels": ["model-large", "model-mini", "model-small"],
+  "modelDeployments": [
+    { "modelKey": "model-large", "providerDeploymentName": "deployment-large" },
+    { "modelKey": "model-mini", "providerDeploymentName": "deployment-mini" },
+    { "modelKey": "model-small", "providerDeploymentName": "deployment-small" }
+  ],
+  "limits": [
+    {
+      "scope": "organization",
+      "modelScope": "all-models",
+      "tokenQuota": 10000000,
+      "quotaPeriod": "Monthly",
+      "tokensPerMinute": 200000
+    },
+    {
+      "scope": "organization",
+      "modelScope": "per-model",
+      "modelKey": "model-large",
+      "tokenQuota": 6000000,
+      "quotaPeriod": "Monthly"
+    },
+    {
+      "scope": "team",
+      "modelScope": "all-models",
+      "tokenQuota": 2000000,
+      "quotaPeriod": "Monthly",
+      "tokensPerMinute": 60000
+    },
+    {
+      "scope": "subject",
+      "modelScope": "all-models",
+      "tokenQuota": 200000,
+      "quotaPeriod": "Monthly",
+      "tokensPerMinute": 20000
+    },
+    {
+      "scope": "application",
+      "modelScope": "all-models",
+      "tokenQuota": 500000,
+      "quotaPeriod": "Monthly"
+    }
+  ],
+  "fallback": {
+    "enabled": true,
+    "maxDepth": 2,
+    "chain": [
+      { "from": "model-large", "to": "model-small" },
+      { "from": "model-small", "to": "model-mini" }
+    ]
+  },
+  "warnThresholdPercent": 80
+}

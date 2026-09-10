@@ -1,0 +1,247 @@
+{
+  "version": 1,
+  "positive": [
+    {
+      "id": "chat-completions-post",
+      "method": "POST",
+      "path": "/v1/chat/completions",
+      "body": {
+        "model": "approved-model",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ]
+      },
+      "expectedStatus": 200,
+      "backendCallExpectation": "one"
+    },
+    {
+      "id": "responses-post",
+      "method": "POST",
+      "path": "/v1/responses",
+      "body": {
+        "model": "approved-model",
+        "input": "hello"
+      },
+      "expectedStatus": 200,
+      "backendCallExpectation": "one"
+    }
+  ],
+  "negative": [
+    {
+      "id": "unknown-route",
+      "category": "undeclared-route",
+      "method": "POST",
+      "path": "/v1/anything",
+      "expectedStatusClass": "4xx",
+      "backendCallExpectation": "zero"
+    },
+    {
+      "id": "models-not-declared",
+      "category": "undeclared-route",
+      "method": "GET",
+      "path": "/v1/models",
+      "expectedStatusClass": "4xx",
+      "backendCallExpectation": "zero"
+    },
+    {
+      "id": "wrong-method",
+      "category": "undeclared-method",
+      "method": "GET",
+      "path": "/v1/responses",
+      "expectedStatusClass": "4xx",
+      "backendCallExpectation": "zero"
+    },
+    {
+      "id": "encoded-path",
+      "category": "encoded-path",
+      "method": "POST",
+      "path": "/v1/%72esponses",
+      "expectedStatusClass": "4xx",
+      "backendCallExpectation": "zero"
+    },
+    {
+      "id": "path-traversal",
+      "category": "path-traversal",
+      "method": "POST",
+      "path": "/v1/responses/../chat/completions",
+      "expectedStatusClass": "4xx",
+      "backendCallExpectation": "zero"
+    },
+    {
+      "id": "client-backend-header",
+      "category": "client-routing-input",
+      "method": "POST",
+      "path": "/v1/responses",
+      "headers": {
+        "x-backend-url": "https://example.invalid"
+      },
+      "body": {
+        "model": "approved-model",
+        "input": "hello"
+      },
+      "expectedStatusClass": "4xx",
+      "backendCallExpectation": "zero"
+    },
+    {
+      "id": "client-deployment-header",
+      "category": "client-routing-input",
+      "method": "POST",
+      "path": "/v1/responses",
+      "headers": {
+        "x-deployment-id": "unregistered-deployment"
+      },
+      "body": {
+        "model": "approved-model",
+        "input": "hello"
+      },
+      "expectedStatusClass": "4xx",
+      "backendCallExpectation": "zero"
+    },
+    {
+      "id": "unknown-model",
+      "category": "model-entitlement",
+      "method": "POST",
+      "path": "/v1/chat/completions",
+      "body": {
+        "model": "unregistered-model",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ]
+      },
+      "expectedStatus": 403,
+      "backendCallExpectation": "zero"
+    },
+    {
+      "id": "missing-model",
+      "category": "invalid-body",
+      "method": "POST",
+      "path": "/v1/responses",
+      "body": {
+        "input": "hello"
+      },
+      "expectedStatus": 400,
+      "backendCallExpectation": "zero"
+    },
+    {
+      "id": "missing-access-token",
+      "category": "authentication",
+      "method": "POST",
+      "path": "/v1/responses",
+      "body": {
+        "model": "approved-model",
+        "input": "hello"
+      },
+      "expectedStatus": 401,
+      "backendCallExpectation": "zero"
+    },
+    {
+      "id": "client-api-key-header",
+      "category": "credential-injection",
+      "method": "POST",
+      "path": "/v1/responses",
+      "headers": {
+        "api-key": "must-not-reach-backend"
+      },
+      "body": {
+        "model": "approved-model",
+        "input": "hello"
+      },
+      "expectedStatusClass": "4xx",
+      "backendCallExpectation": "zero"
+    },
+    {
+      "id": "client-api-version-query",
+      "category": "client-routing-input",
+      "method": "POST",
+      "path": "/v1/responses?api-version=untrusted",
+      "body": {
+        "model": "approved-model",
+        "input": "hello"
+      },
+      "expectedStatusClass": "4xx",
+      "backendCallExpectation": "zero"
+    },
+    {
+      "id": "malformed-json",
+      "category": "invalid-body",
+      "method": "POST",
+      "path": "/v1/responses",
+      "rawBody": "{not-json",
+      "expectedStatus": 400,
+      "backendCallExpectation": "zero"
+    },
+    {
+      "id": "array-body",
+      "category": "invalid-body",
+      "method": "POST",
+      "path": "/v1/responses",
+      "body": [],
+      "expectedStatus": 400,
+      "backendCallExpectation": "zero"
+    },
+    {
+      "id": "messages-not-array",
+      "category": "invalid-body",
+      "method": "POST",
+      "path": "/v1/chat/completions",
+      "body": {
+        "model": "approved-model",
+        "messages": {
+          "role": "user",
+          "content": "hello"
+        }
+      },
+      "expectedStatus": 400,
+      "backendCallExpectation": "zero"
+    },
+    {
+      "id": "body-backend-selection",
+      "category": "client-routing-input",
+      "method": "POST",
+      "path": "/v1/responses",
+      "body": {
+        "model": "approved-model",
+        "input": "hello",
+        "backend_url": "https://example.invalid"
+      },
+      "expectedStatus": 400,
+      "backendCallExpectation": "zero"
+    },
+    {
+      "id": "forwarded-host-header",
+      "category": "client-routing-input",
+      "method": "POST",
+      "path": "/v1/responses",
+      "headers": {
+        "X-Forwarded-Host": "example.invalid"
+      },
+      "body": {
+        "model": "approved-model",
+        "input": "hello"
+      },
+      "expectedStatus": 400,
+      "backendCallExpectation": "zero"
+    },
+    {
+      "id": "method-override-header",
+      "category": "client-routing-input",
+      "method": "POST",
+      "path": "/v1/responses",
+      "headers": {
+        "X-HTTP-Method-Override": "GET"
+      },
+      "body": {
+        "model": "approved-model",
+        "input": "hello"
+      },
+      "expectedStatus": 400,
+      "backendCallExpectation": "zero"
+    }
+  ]
+}

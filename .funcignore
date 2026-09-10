@@ -1,0 +1,17 @@
+*.md
+.git*
+.vscode
+.internal
+.azure
+docs
+infra
+apim
+provenance
+tools
+tests
+local.settings.json
+app/admin-ui
+.c0
+*.code-workspace
+node_modules/esbuild
+node_modules/@esbuild

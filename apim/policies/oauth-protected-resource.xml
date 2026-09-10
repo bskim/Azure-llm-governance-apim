@@ -1,0 +1,35 @@
+<policies>
+  <inbound>
+    <base />
+    <!-- Anonymous by design: a client must be able to fetch this document before it
+         holds a token, so this API validates nothing and calls no backend. Adding an
+         anonymous operation to the governed API instead would need an operation
+         policy that skips the API policy, which is a hole every other operation on
+         that API would then sit behind. -->
+    <return-response>
+      <set-status code="200" reason="OK" />
+      <set-header name="Content-Type" exists-action="override">
+        <value>application/json</value>
+      </set-header>
+      <set-header name="Cache-Control" exists-action="override">
+        <value>max-age=3600</value>
+      </set-header>
+      <set-header name="x-request-id" exists-action="override">
+        <value>@(context.RequestId.ToString())</value>
+      </set-header>
+      <!-- The scope is published in the form a client puts in an authorization request,
+           which for this identity provider is qualified by the resource. Publishing the
+           bare name a token carries in `scp` would be a value nobody can request. -->
+      <set-body>{"resource":"https://{{gateway-host}}/v1","authorization_servers":["https://login.microsoftonline.com/{{entra-tenant-id}}/v2.0"],"scopes_supported":["{{entra-api-audience}}/{{entra-required-scope}}"],"bearer_methods_supported":["header"],"resource_name":"Azure AI Governance Gateway"}</set-body>
+    </return-response>
+  </inbound>
+  <backend>
+    <base />
+  </backend>
+  <outbound>
+    <base />
+  </outbound>
+  <on-error>
+    <base />
+  </on-error>
+</policies>

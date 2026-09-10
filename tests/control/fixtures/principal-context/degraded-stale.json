@@ -1,0 +1,38 @@
+{
+  "contractVersion": "v1",
+  "trust": {
+    "source": "local-deterministic",
+    "validationId": "validation-stale-001",
+    "validatedAt": "2026-07-24T00:00:00Z",
+    "credentialExpiresAt": "2026-07-24T01:00:00Z",
+    "validationState": "local-trusted",
+    "callerSupplied": false
+  },
+  "subject": {
+    "tenantId": "tenant-synthetic",
+    "subjectId": "user-synthetic-stale",
+    "principalType": "user"
+  },
+  "application": {
+    "applicationId": "app-synthetic-cli",
+    "authenticationFlow": "delegated"
+  },
+  "memberships": {
+    "snapshotId": "snapshot-stale-001",
+    "status": "stale",
+    "source": "control-plane",
+    "tenantId": "tenant-synthetic",
+    "subjectId": "user-synthetic-stale",
+    "resolvedAt": "2026-07-23T22:00:00Z",
+    "expiresAt": "2026-07-23T23:00:00Z",
+    "maxAgeSeconds": 3600,
+    "sourceRevision": "revision-stale-001",
+    "reason": "snapshot-expired",
+    "groups": []
+  },
+  "correlation": {
+    "source": "server-generated",
+    "requestId": "request-stale-001",
+    "attempt": 1
+  }
+}

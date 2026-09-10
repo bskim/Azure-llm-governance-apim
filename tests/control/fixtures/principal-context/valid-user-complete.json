@@ -1,0 +1,49 @@
+{
+  "contractVersion": "v1",
+  "trust": {
+    "source": "local-deterministic",
+    "validationId": "validation-user-001",
+    "validatedAt": "2026-07-24T00:00:00Z",
+    "credentialExpiresAt": "2026-07-24T01:00:00Z",
+    "validationState": "local-trusted",
+    "callerSupplied": false
+  },
+  "subject": {
+    "tenantId": "tenant-synthetic",
+    "subjectId": "user-synthetic-001",
+    "principalType": "user"
+  },
+  "application": {
+    "applicationId": "app-synthetic-cli",
+    "authenticationFlow": "delegated"
+  },
+  "memberships": {
+    "snapshotId": "snapshot-user-001",
+    "status": "complete",
+    "source": "local-fixture",
+    "tenantId": "tenant-synthetic",
+    "subjectId": "user-synthetic-001",
+    "resolvedAt": "2026-07-23T23:59:00Z",
+    "expiresAt": "2026-07-24T00:30:00Z",
+    "maxAgeSeconds": 1860,
+    "sourceRevision": "revision-001",
+    "groups": [
+      {
+        "groupId": "group-alpha",
+        "membership": "direct",
+        "authorizationRelevant": true
+      },
+      {
+        "groupId": "group-beta",
+        "membership": "transitive",
+        "authorizationRelevant": true
+      }
+    ]
+  },
+  "correlation": {
+    "source": "server-generated",
+    "requestId": "request-user-001",
+    "traceId": "trace-user-001",
+    "attempt": 1
+  }
+}

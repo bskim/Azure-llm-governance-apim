@@ -1,0 +1,214 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/llm-governance/contracts/v1/effective-authorization.schema.json",
+  "title": "Effective Governance Authorization V1",
+  "description": "Body-free server output that records role and entitlement evaluation provenance.",
+  "x-contract-direction": "server-output-only",
+  "x-semantic-validation-required": true,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractVersion",
+    "decision",
+    "readAuthority",
+    "reasonCode",
+    "effectiveRoles",
+    "permittedReadScopes",
+    "permittedTeamKeys",
+    "modelAllowlist",
+    "limits",
+    "appliedAssignments",
+    "appliedBindings",
+    "assignmentSnapshotId",
+    "assignmentSnapshotVersion",
+    "entitlementSnapshotId",
+    "entitlementSnapshotVersion",
+    "membershipSnapshotId",
+    "evaluationTime"
+  ],
+  "properties": {
+    "contractVersion": { "const": "v1" },
+    "decision": { "enum": ["allow", "deny", "unavailable"] },
+    "readAuthority": { "enum": ["authoritative", "unavailable"] },
+    "reasonCode": { "$ref": "#/$defs/safeId" },
+    "effectiveRoles": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "end-user",
+          "team-viewer",
+          "team-admin",
+          "auditor",
+          "governance-admin",
+          "configuration-approver",
+          "configuration-publisher",
+          "platform-operator"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "permittedReadScopes": {
+      "type": "array",
+      "items": { "enum": ["self", "team", "global"] },
+      "uniqueItems": true
+    },
+    "permittedTeamKeys": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/safeId" },
+      "uniqueItems": true
+    },
+    "modelAllowlist": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/safeId" },
+      "uniqueItems": true
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requestsPerMinute", "tokensPerMinute"],
+      "properties": {
+        "requestsPerMinute": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "integer", "minimum": 0, "maximum": 1000000000 }
+          ]
+        },
+        "tokensPerMinute": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "integer", "minimum": 0, "maximum": 1000000000000 }
+          ]
+        }
+      }
+    },
+    "appliedAssignments": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/appliedAssignment" }
+    },
+    "appliedBindings": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/appliedBinding" }
+    },
+    "assignmentSnapshotId": { "$ref": "#/$defs/safeId" },
+    "assignmentSnapshotVersion": { "type": "integer", "minimum": 1 },
+    "entitlementSnapshotId": { "$ref": "#/$defs/safeId" },
+    "entitlementSnapshotVersion": { "type": "integer", "minimum": 1 },
+    "membershipSnapshotId": { "$ref": "#/$defs/safeId" },
+    "evaluationTime": { "type": "string", "format": "date-time" }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "decision": { "const": "allow" } },
+        "required": ["decision"]
+      },
+      "then": {
+        "properties": { "modelAllowlist": { "minItems": 1 } }
+      }
+    },
+    {
+      "if": {
+        "properties": { "decision": { "enum": ["deny", "unavailable"] } },
+        "required": ["decision"]
+      },
+      "then": {
+        "properties": {
+          "modelAllowlist": { "maxItems": 0 },
+          "limits": {
+            "properties": {
+              "requestsPerMinute": { "type": "null" },
+              "tokensPerMinute": { "type": "null" }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "safeId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "nullableSafeId": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/safeId" }
+      ]
+    },
+    "appliedAssignment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "assignmentId",
+        "assignmentVersion",
+        "roleCode",
+        "scopeKind",
+        "scopeKey"
+      ],
+      "properties": {
+        "assignmentId": { "$ref": "#/$defs/safeId" },
+        "assignmentVersion": { "type": "integer", "minimum": 1 },
+        "roleCode": {
+          "enum": [
+            "team-viewer",
+            "team-admin",
+            "auditor",
+            "governance-admin",
+            "configuration-approver",
+            "configuration-publisher",
+            "platform-operator"
+          ]
+        },
+        "scopeKind": { "enum": ["global", "team"] },
+        "scopeKey": { "$ref": "#/$defs/nullableSafeId" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "scopeKind": { "const": "global" } },
+            "required": ["scopeKind"]
+          },
+          "then": { "properties": { "scopeKey": { "type": "null" } } }
+        },
+        {
+          "if": {
+            "properties": { "scopeKind": { "const": "team" } },
+            "required": ["scopeKind"]
+          },
+          "then": { "properties": { "scopeKey": { "$ref": "#/$defs/safeId" } } }
+        }
+      ]
+    },
+    "appliedBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bindingId", "bindingVersion", "targetKind", "targetKey"],
+      "properties": {
+        "bindingId": { "$ref": "#/$defs/safeId" },
+        "bindingVersion": { "type": "integer", "minimum": 1 },
+        "targetKind": { "enum": ["global", "team", "subject", "application"] },
+        "targetKey": { "$ref": "#/$defs/nullableSafeId" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "targetKind": { "const": "global" } },
+            "required": ["targetKind"]
+          },
+          "then": { "properties": { "targetKey": { "type": "null" } } }
+        },
+        {
+          "if": {
+            "properties": {
+              "targetKind": { "enum": ["team", "subject", "application"] }
+            },
+            "required": ["targetKind"]
+          },
+          "then": { "properties": { "targetKey": { "$ref": "#/$defs/safeId" } } }
+        }
+      ]
+    }
+  }
+}

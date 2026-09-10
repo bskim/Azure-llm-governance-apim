@@ -1,0 +1,106 @@
+{
+  "contractVersion": "v1",
+  "snapshotId": "entitlement-snapshot-fixture-001",
+  "tenantId": "tenant-synthetic",
+  "version": 11,
+  "status": "complete",
+  "capturedAt": "2026-07-23T23:55:00Z",
+  "expiresAt": "2026-07-24T00:30:00Z",
+  "sourceRevision": "entitlement-source-fixture-001",
+  "teamCatalog": [
+    {
+      "teamKey": "team-alpha",
+      "membershipGroupId": "group-alpha"
+    },
+    {
+      "teamKey": "team-beta",
+      "membershipGroupId": "group-beta"
+    }
+  ],
+  "bindings": [
+    {
+      "bindingId": "binding-global-fixture-001",
+      "bindingVersion": 2,
+      "state": "active",
+      "target": {
+        "kind": "global",
+        "key": null
+      },
+      "modelAllowlist": ["coding-primary"],
+      "limits": {
+        "requestsPerMinute": 80,
+        "tokensPerMinute": 80000
+      },
+      "validFrom": "2026-07-23T00:00:00Z",
+      "validUntil": null,
+      "issuedBy": {
+        "kind": "subject",
+        "key": "user-approver-001"
+      },
+      "reasonCode": "approved-policy"
+    },
+    {
+      "bindingId": "binding-subject-fixture-001",
+      "bindingVersion": 4,
+      "state": "active",
+      "target": {
+        "kind": "subject",
+        "key": "user-synthetic-001"
+      },
+      "modelAllowlist": ["coding-fast", "coding-primary"],
+      "limits": {
+        "requestsPerMinute": 120,
+        "tokensPerMinute": 120000
+      },
+      "validFrom": "2026-07-23T00:00:00Z",
+      "validUntil": null,
+      "issuedBy": {
+        "kind": "subject",
+        "key": "user-approver-001"
+      },
+      "reasonCode": "approved-policy"
+    },
+    {
+      "bindingId": "binding-team-alpha-fixture-001",
+      "bindingVersion": 2,
+      "state": "active",
+      "target": {
+        "kind": "team",
+        "key": "team-alpha"
+      },
+      "modelAllowlist": ["coding-primary"],
+      "limits": {
+        "requestsPerMinute": 70,
+        "tokensPerMinute": 70000
+      },
+      "validFrom": "2026-07-23T00:00:00Z",
+      "validUntil": null,
+      "issuedBy": {
+        "kind": "subject",
+        "key": "user-approver-001"
+      },
+      "reasonCode": "approved-policy"
+    },
+    {
+      "bindingId": "binding-team-beta-fixture-001",
+      "bindingVersion": 2,
+      "state": "active",
+      "target": {
+        "kind": "team",
+        "key": "team-beta"
+      },
+      "modelAllowlist": ["coding-primary"],
+      "limits": {
+        "requestsPerMinute": 75,
+        "tokensPerMinute": 75000
+      },
+      "validFrom": "2026-07-23T00:00:00Z",
+      "validUntil": null,
+      "issuedBy": {
+        "kind": "subject",
+        "key": "user-approver-001"
+      },
+      "reasonCode": "approved-policy"
+    }
+  ]
+}

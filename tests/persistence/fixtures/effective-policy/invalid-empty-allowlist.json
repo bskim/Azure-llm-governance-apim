@@ -1,0 +1,26 @@
+{
+  "contractVersion": "v1",
+  "documentType": "effective-policy",
+  "id": "effective-policy|team-platform|pk-8f3a2c91d4e6b705",
+  "scopeGroupId": "team-platform",
+  "principalKey": "pk-8f3a2c91d4e6b705",
+  "configVersion": 12,
+  "resolution": "resolved",
+  "resolvedAt": "2026-08-04T00:00:00.000Z",
+  "expiresAt": "2026-08-04T00:01:00.000Z",
+  "attribution": {
+    "subjectKey": "sk1-3xQm7pR2vLnB8dKfWzYtHcJa9SgUeNiOw0",
+    "applicationKey": "ak1-Zt4Lm9QbXe2RvNc7YuHpKdSaJf0WgTiOx1",
+    "teamKey": "team-platform"
+  },
+  "allowedModels": [],
+  "limits": [
+    {
+      "scope": "organization",
+      "modelScope": "all-models",
+      "tokenQuota": 10000000,
+      "quotaPeriod": "Monthly"
+    }
+  ],
+  "fallback": { "enabled": false, "maxDepth": 1, "chain": [] }
+}
