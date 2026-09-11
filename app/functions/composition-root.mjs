@@ -1,6 +1,7 @@
 import { DefaultAzureCredential } from '@azure/identity';
 
 import { createPolicyResolver } from '../control-api/policy-resolution-endpoint.mjs';
+import { createPolicyImpactPreview } from '../control-api/policy-impact-preview.mjs';
 import { createGatewayIdentityResolver } from '../control-api/gateway-identity.mjs';
 import { createGovernancePublisher } from '../control-api/governance-publisher.mjs';
 import { createPublishedPolicySource } from '../control-api/published-policy-source.mjs';
@@ -35,6 +36,7 @@ import {
   createChangeLogHandler,
 } from './handlers/admin-screens.mjs';
 import { createRollupProjector } from './handlers/rollup-projector.mjs';
+import { createPolicyImpactPreviewHandler } from './handlers/policy-impact-preview.mjs';
 import { createScheduledRollupProjector } from '../control-api/scheduled-rollup-projector.mjs';
 import { createScheduledDriftDetector } from '../control-api/scheduled-drift-detector.mjs';
 import { createScheduledDirectoryProjector } from '../control-api/scheduled-directory-projector.mjs';
@@ -269,6 +271,88 @@ export function createDeployedScreenHandlers(
     lifecycle: createLifecycleHandler(shared),
     audit: ledger === null ? null : createChangeLogHandler({ ...shared, ledger }),
   };
+}
+
+export function createPolicyImpactCallerIdentity(target, evaluatedAt) {
+  if (!['delegated', 'application'].includes(target.authenticationFlow)) {
+    throw new TypeError('The preview requires an established authentication flow.');
+  }
+  return createGatewayIdentityResolver({ clock: { nowIso: () => evaluatedAt } })({
+    tenantId: target.tenantId,
+    subjectId: target.subjectId,
+    applicationId: target.applicationId,
+    authenticationFlow: target.authenticationFlow,
+    ...(target.groups === undefined ? {} : { groups: target.groups }),
+  });
+}
+
+export function createPolicyImpactPreviewFromStore({
+  store,
+  scopeGroupId,
+  deriver,
+  membershipSource,
+  clock,
+}) {
+  const readActiveSnapshots = createPublishedPolicySource({ store, scopeGroupId, clock });
+  return createPolicyImpactPreview({
+    clock,
+    readActiveSnapshots,
+    async readDraft({ revisionId }) {
+      const held = await store.readConfigurationDraft({ scopeGroupId, revisionId });
+      return held?.document ?? null;
+    },
+    async readRevision({ revisionId }) {
+      const held = await store.readConfigurationRevision({ scopeGroupId, revisionId });
+      return held?.document ?? null;
+    },
+    async readActiveRevision() {
+      return selectActiveRevision(await store.queryConfigurationRevisions({ scopeGroupId }));
+    },
+    async resolvePolicy({ snapshots, request, targetContext, evaluatedAt }) {
+      const evaluationClock = { nowIso: () => evaluatedAt };
+      const resolver = createPolicyResolver({
+        deriver,
+        scopeGroupId,
+        snapshotProvider: async () => snapshots,
+        principalContextFactory: createPrincipalContextFactory({
+          membershipResolver: createMembershipResolver({
+            membershipSource,
+            store,
+            scopeGroupId,
+            clock: evaluationClock,
+          }),
+          clock: evaluationClock,
+          idGenerator: createSequenceIdGenerator('preview'),
+        }),
+        identityResolver: async () => createPolicyImpactCallerIdentity(targetContext, evaluatedAt),
+        clock: evaluationClock,
+        config: RESOLVER_CONFIG,
+      });
+      return resolver.resolve(request);
+    },
+  });
+}
+
+export function createDeployedPolicyImpactPreviewHandler(
+  environment = process.env,
+  clock = { nowIso: () => new Date().toISOString() },
+) {
+  const store = createGovernanceStoreFromEnvironment(environment);
+  const deriver = createDeployedActorDeriver(environment);
+  if (store === null || deriver === null) return null;
+  return createPolicyImpactPreviewHandler({
+    preview: createPolicyImpactPreviewFromStore({
+      store,
+      scopeGroupId: ROLLUP_CONFIG.scopeGroupId,
+      deriver,
+      membershipSource: readMembershipSource(environment),
+      clock,
+    }),
+    expectedAudience: environment.CONTROL_PLANE_AUDIENCE ?? '',
+    roleMapping: readRoleMapping(environment),
+    rolesClaim: environment.GOVERNANCE_ROLES_CLAIM,
+    knownTeamKeys: KNOWN_TEAM_KEYS,
+  });
 }
 
 /**

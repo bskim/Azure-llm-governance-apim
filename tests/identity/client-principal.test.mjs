@@ -24,6 +24,7 @@ test('a platform that forwards identity-model claim URIs still names the caller'
 
   assert.equal(caller.tenantId, 'tenant-0000');
   assert.equal(caller.objectId, 'object-0000');
+  assert.equal(caller.subjectId, null, 'a directory object does not establish the token subject');
 });
 
 test('a caller the platform did not identify is null rather than an empty string', () => {
@@ -39,4 +40,23 @@ test('a caller the platform did not identify is null rather than an empty string
 
   assert.equal(caller.tenantId, null);
   assert.equal(caller.objectId, null);
+});
+
+test('scope aliases distinguish delegated tokens from role-only application tokens', () => {
+  const baseClaims = [
+    { typ: 'aud', val: AUDIENCE },
+    { typ: 'roles', val: 'Governance.Administer' },
+    { typ: 'sub', val: 'token-subject' },
+    { typ: 'azp', val: 'admin-client' },
+  ];
+  for (const scopeType of ['scp', 'http://schemas.microsoft.com/identity/claims/scope']) {
+    const header = principal([...baseClaims, { typ: scopeType, val: 'Governance.Access' }]);
+    const caller = readVerifiedCaller({ headers: { 'x-ms-client-principal': header }, expectedAudience: AUDIENCE });
+    assert.equal(caller.authenticationFlow, 'delegated');
+  }
+  const caller = readVerifiedCaller({
+    headers: { 'x-ms-client-principal': principal(baseClaims) },
+    expectedAudience: AUDIENCE,
+  });
+  assert.equal(caller.authenticationFlow, 'application');
 });

@@ -681,6 +681,25 @@
             <dl id="lifecycle-quality-details" class="quality-details"></dl>
           </section>
 
+          <section id="policy-impact-preview" class="authoring-panel" aria-labelledby="policy-impact-preview-title" hidden>
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow" data-i18n="preview.eyebrow">Read-only comparison</p>
+                <h3 id="policy-impact-preview-title" data-i18n="preview.title">Saved draft impact</h3>
+              </div>
+            </div>
+            <p id="policy-impact-preview-description" class="policy-meta" data-i18n="preview.description">Compare the stored draft with active policy for the server-established current caller. This does not publish or change the draft.</p>
+            <label for="policy-impact-api-family" data-i18n="preview.apiFamily">API family</label>
+            <select id="policy-impact-api-family">
+              <option value="openai-responses">openai-responses</option>
+              <option value="openai-chat-completions">openai-chat-completions</option>
+              <option value="anthropic-messages">anthropic-messages</option>
+            </select>
+            <div id="policy-impact-preview-state" class="quality-banner" aria-live="polite"></div>
+            <div id="policy-impact-preview-results"></div>
+            <div id="policy-impact-preview-actions"></div>
+          </section>
+
           <section id="lifecycle-conflict" class="quality-banner" aria-labelledby="lifecycle-conflict-title" aria-live="assertive" hidden>
             <div>
               <p id="lifecycle-conflict-eyebrow" class="eyebrow" data-i18n="conflict.eyebrow">Someone else saved first</p>

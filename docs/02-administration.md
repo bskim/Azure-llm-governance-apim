@@ -42,6 +42,18 @@ A target failure changes the lifecycle to `failed`; fix its cause and retry the 
 
 The console exposes `{ "command": "abandon", "revisionId": "revision-0002" }` only when the service permits recovery abandonment: a legacy, bootstrap, or shared-author draft, approval, failed proposal, or publishing proposal has no verified target, and its author cannot be matched to the current administrator. It additionally requires both the publish and elevated own-approval capabilities. Any verified target refuses abandonment with `proposal-abandonment-verified-targets`; a draft or approval carrying any publication activity is also refused. Repair and retry instead. A legacy revision with no stored proposal likewise refuses content replacement: with verified targets it reports `legacy-recovery-required`, and with none it reports `legacy-recovery-abandon-required` until an elevated administrator abandons it and creates a fresh proposal.
 
+### Preview A Saved Draft
+
+For a draft with stored content, choose **Preview impact** on the Publishing screen. Select the API family to compare the active policy with the saved proposal. The comparison includes allowed models, provider deployment mappings, request and token limits, budget thresholds, and fallback paths or rejection reasons. It uses the same policy resolver for both sides at one evaluation time.
+
+The supported target is **the current authenticated caller only**, including the application identity in that caller's validated request. The preview does not impersonate a different coding client, select arbitrary users, or substitute an administrator's membership for another caller. In local mode it explicitly identifies deterministic persona evidence; that is not proof of deployed authorization. If the current caller's identity or membership cannot be established, the comparison reports unavailable rather than inventing a policy.
+
+In a deployment, this identity comes from the **control-plane token**, not an inference token. Entra token subjects can differ between resource audiences, and the administration client can differ from the coding client. The preview preserves the validated token subject, application, and delegated/application flow; it does not replace the subject with an object ID. A stored membership record for an inference subject may therefore not match. The `inference-token-identity-not-established` limitation means subject- and application-scoped results are not evidence of the coding client's gateway policy; a refusal here does not establish that client's access.
+
+The request reads the immutable stored proposal, not edited policy content supplied by the browser. Previewing does not save, approve, publish, consume tokens, or change active policy. A changed active set or draft revision during comparison makes the result stale; refresh and compare again. Continue through the existing distinct approval and verified publication process when ready.
+
+This is a static policy comparison, not a measurement of live budget counters or a prediction that the next request will succeed. An unchanged result applies only to this caller and API family, not every caller. Review the reported refusal or unavailable reasons on each side, and use the separately described [local evaluation scenarios](03-operations.md#repeatable-local-evaluation) for repeatable reference checks.
+
 ## Budgets
 
 ![The budgets screen](images/console-budgets.png)

@@ -80,6 +80,9 @@ function projectRevision(
     publishStartedAt: revision.publishStartedAt,
     publishCompletedAt: revision.publishCompletedAt,
     resumeInitialOnly: revision.authoredBy === 'bootstrap-import',
+    previewAvailable:
+      storedProposalAvailable === true
+      && ['draft', 'approved', 'failed'].includes(revision.state),
     failure: revision.failure === null ? null : { reasonCode: revision.failure.reasonCode, at: revision.failure.at },
     supersededInFavourOf: revision.supersededInFavourOf,
     targets: revision.targets.map((target) => ({

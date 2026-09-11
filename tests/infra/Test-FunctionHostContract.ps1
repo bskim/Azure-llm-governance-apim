@@ -44,7 +44,7 @@ $httpTriggerCount = [regex]::Matches($registrations, 'app\.http\(').Count
 $timerTriggerCount = [regex]::Matches($registrations, 'app\.timer\(').Count
 $scaleGroupCount = 1 + $timerTriggerCount
 $worstCaseCores = 1 + ($scaleGroupCount * $maximumInstanceCount)
-Assert-Host ($httpTriggerCount -eq 22) 'The FC1 inventory must account for exactly 22 HTTP functions sharing one HTTP scale group.'
+Assert-Host ($httpTriggerCount -eq 23) 'The FC1 inventory must account for exactly 23 HTTP functions sharing one HTTP scale group.'
 Assert-Host ($timerTriggerCount -eq 6) 'The FC1 inventory must conservatively treat exactly six timer functions as six scale groups.'
 Assert-Host ($scaleGroupCount -eq 7) 'The FC1 budget must cover seven total scale groups.'
 Assert-Host ($worstCaseCores -eq 197) 'The FC1 budget formula 1 + (7 * 28) must equal 197 cores.'
@@ -55,6 +55,7 @@ Assert-Host ($registrations -notmatch 'CosmosClient|createPolicyResolver\(|compo
 Assert-Host ($registrations -notmatch 'createPersonaScopedResolver|isKnownPersona|personaGuard') 'The deployed Functions host must never serve deterministic persona policy as caller-specific governance.'
 Assert-Host ($registrations -match 'createDeployedPolicyResolver') 'The deployed host must build policy resolution from published governance.'
 Assert-Host ($registrations -match "route:\s*'v1/admin/governance/publish'") 'The publication route must be registered, because a closed store can only be written from inside the network.'
+Assert-Host ($registrations -match "route:\s*'v1/admin/policy-impact-preview'") 'The read-only policy impact preview route must be registered.'
 
 # A finding nobody can read is a finding nobody acts on, and the store is closed to
 # the public network, so the ledger needs a route of its own.

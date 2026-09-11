@@ -74,6 +74,7 @@ try {
     # from what actually ran instead of a number kept in step by hand.
     $nodeSuites = [ordered]@{
         '.\tests\mock\foundry-mock.test.mjs'                    = 'The deterministic mock backend tests failed.'
+        '.\tests\evaluation\evaluation-runner.test.mjs'        = 'The bounded local evaluation scenarios failed.'
         '.\tests\c0\c0-runtime.test.mjs'                        = 'The C0 transactional allowance proxy tests failed.'
         '.\tests\c0\c0-shared-accounting.test.mjs'              = 'The C0 shared accounting projection tests failed.'
         '.\tests\control\principal-context-factory.test.mjs'    = 'The PrincipalContext factory tests failed.'
@@ -166,6 +167,8 @@ try {
         '.\tests\control\admin-notifications-handler.test.mjs' = 'The deployed notifications route tests failed.'
         '.\tests\control\draft-authoring.test.mjs'              = 'The proposal authoring tests failed.'
         '.\tests\control\proposal-publication.test.mjs'         = 'The proposal publication tests failed.'
+        '.\tests\control\policy-impact-preview.test.mjs'       = 'The read-only policy impact comparison tests failed.'
+        '.\tests\control\policy-impact-preview-handler.test.mjs' = 'The authenticated policy impact preview tests failed.'
         '.\tests\persistence\persistence-contract.test.mjs'     = 'The persistence document contract tests failed.'
         '.\tests\persistence\in-memory-governance-store.test.mjs' = 'The in-memory governance store contract tests failed.'
         '.\tests\distribution\suite-coverage.test.mjs'          = 'A test file exists that no suite runs.'

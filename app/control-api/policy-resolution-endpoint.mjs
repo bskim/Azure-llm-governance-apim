@@ -88,9 +88,12 @@ function resolveAttributionTeamKey(principalContext, entitlementSnapshot, evalua
 }
 
 const FALLBACK_DISABLED = Object.freeze({
+  disposition: 'disabled',
   enabled: false,
   maxDepth: 1,
   chain: [],
+  rejections: [],
+  reasonCode: 'fallback-evidence-unavailable',
   modelSelectionIntent: 'pinned',
   substitutionNotice: 'header',
 });
@@ -171,9 +174,12 @@ function resolveFallback({
     apiFamily,
   });
   return {
+    disposition: compiled.disposition,
     enabled: compiled.enabled,
     maxDepth: compiled.maxDepth,
     chain: compiled.chain,
+    rejections: compiled.rejections,
+    reasonCode: compiled.reasonCode,
     modelSelectionIntent: compiled.modelSelectionIntent,
     substitutionNotice: compiled.substitutionNotice,
   };
@@ -309,6 +315,13 @@ export function createPolicyResolver({
           resolvedAt,
           expiresAt,
         }),
+        evaluation: {
+          fallback: {
+            disposition: fallback.disposition,
+            reasonCode: fallback.reasonCode,
+            rejections: structuredClone(fallback.rejections),
+          },
+        },
       };
     } catch {
       // A malformed or incomplete policy is a configuration fault, not a caller

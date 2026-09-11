@@ -17,6 +17,7 @@ import {
   createDeployedDriftSchedule,
   createDeployedScreenHandlers,
   createDeployedPolicyResolver,
+  createDeployedPolicyImpactPreviewHandler,
   createDeployedPublishGovernanceHandler,
   createDeployedRollupSchedule,
   createModelRegistryReader,
@@ -52,6 +53,7 @@ const screens = createDeployedScreenHandlers(process.env, systemClock);
 const adminNotifications = createDeployedAdminNotificationsHandler(process.env, systemClock);
 const acknowledgeNotification = createDeployedAcknowledgeNotificationHandler(process.env, systemClock);
 const notificationChannel = createDeployedNotificationChannelHandler(process.env, systemClock);
+const policyImpactPreview = createDeployedPolicyImpactPreviewHandler(process.env, systemClock);
 
 app.http('effectivePolicy', {
   route: 'v1/internal/effective-policy',
@@ -263,6 +265,15 @@ if (screens !== null) {
       methods: ['GET'],
       authLevel: 'anonymous',
       handler: screens.audit,
+    });
+  }
+
+  if (policyImpactPreview !== null) {
+    app.http('policyImpactPreview', {
+      route: 'v1/admin/policy-impact-preview',
+      methods: ['POST'],
+      authLevel: 'anonymous',
+      handler: policyImpactPreview,
     });
   }
 }

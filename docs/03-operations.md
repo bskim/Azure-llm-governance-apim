@@ -49,6 +49,31 @@ Customers own registry governance, license review, SBOM review, signing, and rel
 
 Record the tested source revision, commands, exit status, skipped checks, and unresolved failures in the customer's controlled system. Do not publish environment-specific records or internal review material in customer documentation.
 
+### Repeatable Local Evaluation
+
+Run the bounded local scenarios from the repository root:
+
+```powershell
+node tools/evaluation/run-local-evaluation.mjs
+node --test tests/evaluation/*.test.mjs
+```
+
+The scenarios cover an allowed model, a denied model, HARD exhaustion, SOFT grace, THROTTLE, and fallback. They use synthetic identities, fixed policy inputs, and a loopback mock rather than an Azure endpoint. Each scenario compares expected values with observations from the component it actually exercises. A failed comparison produces a nonzero exit status.
+
+Interpret the evidence at its actual level:
+
+| Evidence | What it establishes | What it does not establish |
+|---|---|---|
+| Reference calculation | The resolver, budget publication, or model-selection reference produces the expected policy result | APIM executed that result or a real request was admitted or blocked |
+| Loopback mock | The local backend received the selected model and returned deterministic usage within the scenario bounds | Azure provider behavior, authentication, billing, or gateway enforcement |
+| Static policy checks | The APIM policy source satisfies the repository's structural contracts | Live counter values, distributed throttling, or deployment success |
+
+The report's `static-smoke` evidence only checks for selected policy text. Run `pwsh -NoProfile -File tests/policy/Test-InferencePolicy.ps1` separately for the existing static APIM contract checks. Keep that result separate from reference and mock observations. The local administration server is not an APIM emulator; a local reference decision is not an observed gateway HTTP response.
+
+HARD, SOFT, and THROTTLE observations compare published quotas, warning percentages, and tier boundaries, not live enforcement. Boundary positions are arithmetic over the published thresholds. Model selection alone does not enforce HARD quotas, so the HARD scenario can still invoke the local mock; this is not evidence that an exhausted gateway budget allows a request. Each scenario permits at most one mock request with fixed usage of three input and two output tokens; the full matrix uses five requests and 25 mock tokens, with no Azure token cost.
+
+The scenarios do not provide a live mode. Actual Azure evaluation requires separate approval of callers, endpoints, models, request and token budgets, permitted changes, and cleanup. A passing local report does not authorize that next phase.
+
 ## Validate And Deploy
 
 Before each cloud action, confirm the active authentication context and target boundary. Review previews for creates, updates, deletions, external dependencies, and protected resources.

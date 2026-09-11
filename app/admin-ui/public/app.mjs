@@ -1,4 +1,5 @@
 import { localeTag, resolveLocale, resolveModeTranslationKey, translate } from './i18n.mjs';
+import { createLatestLoad } from './latest-load.mjs';
 import { createLocalSession, loadSession, readSessionConfig } from './session.mjs';
 import {
   BUDGET_ACTIONS,
@@ -200,6 +201,11 @@ const elements = {
   lifecycleReasonInput: document.querySelector('#lifecycle-reason-input'),
   lifecycleReasonError: document.querySelector('#lifecycle-reason-error'),
   lifecycleReasonActions: document.querySelector('#lifecycle-reason-actions'),
+  policyImpactPreview: document.querySelector('#policy-impact-preview'),
+  policyImpactApiFamily: document.querySelector('#policy-impact-api-family'),
+  policyImpactState: document.querySelector('#policy-impact-preview-state'),
+  policyImpactResults: document.querySelector('#policy-impact-preview-results'),
+  policyImpactActions: document.querySelector('#policy-impact-preview-actions'),
   notificationsContent: document.querySelector('#notifications-content'),
   notificationsQualityDetails: document.querySelector('#notifications-quality-details'),
   notificationsUpdatedAt: document.querySelector('#notifications-updated-at'),
@@ -350,6 +356,7 @@ const LOCAL_API = Object.freeze({
   fallbackWritePath: '/api/local/fallback/propose',
   assignmentsWritePath: '/api/local/assignments/propose',
   modelsWritePath: '/api/local/models/propose',
+  policyImpactPreviewPath: '/api/local/policy-impact-preview',
 });
 
 // The route a deployment would serve for each screen. Which of these it actually
@@ -382,6 +389,7 @@ const DEPLOYED_WRITE_PATHS = Object.freeze({
   assignmentsWritePath: '/api/v1/admin/assignments',
   modelsWritePath: '/api/v1/admin/models',
   governancePublishPath: '/api/v1/admin/governance/publish',
+  policyImpactPreviewPath: '/api/v1/admin/policy-impact-preview',
 });
 let session = createLocalSession();
 let api = LOCAL_API;
@@ -547,6 +555,7 @@ function applyScreenChrome() {
 }
 
 function setLocale(nextLocale) {
+  previewLoads.invalidate();
   locale = resolveLocale(nextLocale);
   const url = new URL(location.href);
   url.searchParams.set('lang', locale);
@@ -2812,6 +2821,292 @@ const TARGET_TONES = Object.freeze({
   failed: 'danger',
 });
 
+let previewRevision = null;
+const previewLoads = createLatestLoad();
+
+function formatBasisPoints(value) {
+  return new Intl.NumberFormat(localeTag(locale), {
+    style: 'percent',
+    maximumFractionDigits: 2,
+  }).format(value / 10_000);
+}
+
+function appendPreviewDetails(parent, pairs) {
+  const details = createElement('dl', 'quality-details preview-details');
+  details.append(...pairs.map(([label, value]) => {
+    const item = createElement('div', 'preview-detail');
+    item.append(createElement('dt', null, label), createElement('dd', null, value));
+    return item;
+  }));
+  parent.append(details);
+}
+
+function renderPreviewModels(policy) {
+  const section = createElement('section', 'preview-section');
+  section.append(createElement('h4', null, t('preview.models')));
+  const mappings = new Map(
+    (policy.modelDeployments ?? []).map((model) => [model.modelKey, model.providerDeploymentName]),
+  );
+  const list = createElement('ul', 'preview-item-list');
+  for (const modelKey of policy.allowedModels ?? []) {
+    const item = document.createElement('li');
+    item.append(
+      createElement('strong', null, modelKey),
+      createElement('span', 'policy-meta', t('preview.modelMapping', {
+        deployment: mappings.get(modelKey) ?? t('preview.none'),
+      })),
+    );
+    list.append(item);
+  }
+  if (list.childElementCount === 0) {
+    section.append(createElement('p', 'empty-message', t('preview.none')));
+  } else {
+    section.append(list);
+  }
+  return section;
+}
+
+function renderPreviewLimits(policy) {
+  const section = createElement('section', 'preview-section');
+  section.append(createElement('h4', null, t('preview.limits')));
+  const grid = createElement('div', 'preview-limit-grid');
+  for (const limit of policy.limits ?? []) {
+    const card = createElement('article', 'preview-limit-card');
+    const scope = translateCode('budgetScope', limit.scope);
+    const modelScope = limit.modelScope === 'per-model'
+      ? t('preview.perModel', { model: limit.modelKey })
+      : t('preview.allModels');
+    card.append(createElement('strong', null, `${scope} · ${modelScope}`));
+    const quota = limit.tokenQuota === undefined
+      ? t('preview.none')
+      : t('preview.tokenQuota', {
+          value: formatNumber(limit.tokenQuota),
+          period: translateCode('period', limit.quotaPeriod),
+        });
+    const action = limit.budgetAction === undefined
+      ? t('preview.notBudgetDerived')
+      : translateCode('budgetAction', limit.budgetAction);
+    const grace = limit.budgetThresholds?.graceBasisPoints === undefined
+      ? t('preview.none')
+      : formatBasisPoints(limit.budgetThresholds.graceBasisPoints);
+    appendPreviewDetails(card, [
+      [t('preview.quota'), quota],
+      [t('preview.rpm'), limit.requestsPerMinute === undefined
+        ? t('preview.none')
+        : formatNumber(limit.requestsPerMinute)],
+      [t('preview.tpm'), limit.tokensPerMinute === undefined
+        ? t('preview.none')
+        : formatNumber(limit.tokensPerMinute)],
+      [t('preview.budgetAction'), action],
+      [t('preview.grace'), grace],
+    ]);
+    grid.append(card);
+  }
+  if (grid.childElementCount === 0) {
+    section.append(createElement('p', 'empty-message', t('preview.none')));
+  } else {
+    section.append(grid);
+  }
+  return section;
+}
+
+function renderPreviewFallback(policy, controlPlaneScoped) {
+  const section = createElement('section', 'preview-section');
+  section.append(createElement(
+    'h4',
+    null,
+    t(controlPlaneScoped ? 'preview.fallbackControlPlane' : 'preview.fallback'),
+  ));
+  const fallback = policy.fallback ?? { enabled: false, chain: [] };
+  const restrictions = policy.fallbackRestrictions ?? {
+    reasonCode: 'fallback-evidence-unavailable',
+    rejections: [],
+  };
+  appendPreviewDetails(section, [
+    [t('preview.fallbackState'), fallback.enabled ? t('preview.enabled') : t('preview.disabled')],
+    [t('preview.maxDepth'), formatNumber(fallback.maxDepth ?? 1)],
+    [t('preview.selectionIntent'), t(`preview.selection.${policy.modelSelectionIntent ?? 'pinned'}`)],
+    [t('preview.restrictionReason'), translateCode('fallbackReason', restrictions.reasonCode)],
+  ]);
+
+  const edgeList = createElement('ul', 'preview-item-list');
+  for (const edge of fallback.chain ?? []) {
+    edgeList.append(createElement('li', null, t('preview.edge', edge)));
+  }
+  if (edgeList.childElementCount === 0) {
+    edgeList.append(createElement('li', 'policy-meta', t('preview.noFallbackEdges')));
+  }
+  section.append(createElement('h5', null, t('preview.permittedEdges')), edgeList);
+
+  const rejectionList = createElement('ul', 'preview-item-list');
+  for (const rejection of restrictions.rejections ?? []) {
+    const item = document.createElement('li');
+    item.append(
+      createElement('strong', null, t('preview.edge', rejection)),
+      createElement('span', 'policy-meta', translateCode('fallbackReason', rejection.blockedBy)),
+    );
+    rejectionList.append(item);
+  }
+  if (rejectionList.childElementCount === 0) {
+    rejectionList.append(createElement('li', 'policy-meta', t('preview.noRejections')));
+  }
+  section.append(createElement('h5', null, t('preview.rejectedEdges')), rejectionList);
+  return section;
+}
+
+function renderPreviewTiers(policy) {
+  const section = createElement('section', 'preview-section');
+  section.append(createElement('h4', null, t('preview.throttleTiers')));
+  const tiers = createElement('ul', 'preview-item-list');
+  for (const tier of policy.throttleTiers ?? []) {
+    tiers.append(createElement('li', null, t('preview.throttleTier', {
+      tier: tier.tierCode,
+      threshold: formatBasisPoints(tier.atBasisPoints),
+      scope: translateCode('budgetScope', tier.scope),
+    })));
+  }
+  section.append(
+    tiers.childElementCount === 0
+      ? createElement('p', 'empty-message', t('preview.none'))
+      : tiers,
+  );
+  return section;
+}
+
+function renderPreviewOutcome(titleKey, outcome, controlPlaneScoped) {
+  const card = createElement('article', 'preview-outcome');
+  card.append(
+    createElement('p', 'eyebrow', t(controlPlaneScoped ? `${titleKey}ControlPlane` : titleKey)),
+    createElement('h3', null, t(`preview.outcome.${outcome.state}`)),
+  );
+  if (outcome.policy === null) {
+    card.append(createElement('p', 'policy-meta', translateCode('previewReason', outcome.reasonCode)));
+    return card;
+  }
+  const threshold = outcome.policy.warnThresholdPercent === undefined
+    ? t('preview.none')
+    : `${formatNumber(outcome.policy.warnThresholdPercent)}%`;
+  appendPreviewDetails(card, [[t('preview.warnThreshold'), threshold]]);
+  card.append(
+    renderPreviewModels(outcome.policy),
+    renderPreviewLimits(outcome.policy),
+    renderPreviewTiers(outcome.policy),
+    renderPreviewFallback(outcome.policy, controlPlaneScoped),
+  );
+  return card;
+}
+
+function renderPolicyImpact(model) {
+  const outcomesResolved = model.before?.state === 'resolved' && model.after?.state === 'resolved';
+  const displayState = model.state === 'no-change' && !outcomesResolved ? 'unavailable' : model.state;
+  const changed = displayState === 'changed';
+  elements.policyImpactState.classList.toggle('is-fresh', displayState === 'no-change');
+  elements.policyImpactState.replaceChildren(
+    createElement('strong', null, t(`preview.state.${displayState}`)),
+    createElement('p', 'policy-meta', t('preview.basis', {
+      revision: model.revision.revisionCode,
+      active: model.basis.activeRevisionCode ?? t('lifecycle.none'),
+      at: formatTime(model.generatedAt),
+      apiFamily: model.apiFamily,
+    })),
+    createElement('p', 'policy-meta', t('preview.targetEvidence', {
+      evidence: translateCode('previewEvidence', model.target.evidence),
+    })),
+    ...(model.target.identityBasis === 'control-plane-token'
+      ? [createElement('p', 'policy-meta preview-identity-warning', t('preview.controlPlaneIdentityWarning', {
+          flow: translateCode('previewAuthenticationFlow', model.target.authenticationFlow ?? 'unavailable'),
+        }))]
+      : []),
+  );
+  const outcomes = createElement('div', 'preview-outcomes');
+  const controlPlaneScoped = model.target.identityBasis === 'control-plane-token';
+  outcomes.append(
+    renderPreviewOutcome('preview.before', model.before, controlPlaneScoped),
+    renderPreviewOutcome('preview.after', model.after, controlPlaneScoped),
+  );
+  const differences = createElement('div');
+  differences.append(createElement('h3', null, t('preview.differences')));
+  if (model.changes.length === 0) {
+    differences.append(createElement(
+      'p',
+      'empty-message',
+      t(outcomesResolved ? 'preview.noDifferences' : 'preview.comparisonIncomplete'),
+    ));
+  } else {
+    const list = createElement('ul', 'preview-change-list');
+    for (const change of model.changes) {
+      const item = createElement('li');
+      const badge = createElement('span', 'status-label', t('preview.changed'));
+      badge.dataset.tone = 'warning';
+      item.append(badge, createElement('strong', null, translateCode('previewCategory', change.category)));
+      list.append(item);
+    }
+    differences.append(list);
+  }
+  differences.append(createElement('p', 'policy-meta', t('preview.limitations')));
+  elements.policyImpactResults.replaceChildren(outcomes, differences);
+}
+
+async function loadPolicyImpact() {
+  if (previewRevision === null) return;
+  const load = previewLoads.begin();
+  elements.policyImpactState.replaceChildren(createElement('strong', null, t('preview.loading')));
+  elements.policyImpactResults.replaceChildren();
+  const params = new URLSearchParams();
+  if (session.mode === 'local') params.set('persona', elements.persona.value);
+  try {
+    const response = await fetch(`${api.baseUrl}${api.policyImpactPreviewPath}?${params}`, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        ...(await session.getAuthorizationHeader()),
+      },
+      body: JSON.stringify({
+        revisionId: previewRevision.revisionCode,
+        expectedRevisionNumber: previewRevision.revisionNumber,
+        target: { kind: 'current-caller' },
+        apiFamily: elements.policyImpactApiFamily.value,
+      }),
+      signal: load.signal,
+    });
+    const payload = await response.json();
+    if (!load.isCurrent()) return;
+    if (!response.ok) {
+      const state = response.status === 403
+        ? 'denied'
+        : response.status === 409
+          ? 'stale'
+          : 'unavailable';
+      elements.policyImpactState.replaceChildren(
+        createElement('strong', null, t(`preview.state.${state}`)),
+        createElement('p', 'policy-meta', translateCode(
+          'previewReason',
+          payload.error?.reasonCode ?? payload.error?.code ?? 'preview-source-unavailable',
+        )),
+      );
+      return;
+    }
+    renderPolicyImpact(payload);
+  } catch {
+    if (!load.isCurrent()) return;
+    elements.policyImpactState.replaceChildren(
+      createElement('strong', null, t('preview.state.unavailable')),
+      createElement('p', 'policy-meta', t('preview.networkError')),
+    );
+  } finally {
+    load.finish();
+  }
+}
+
+function openPolicyImpact(record) {
+  previewLoads.invalidate();
+  previewRevision = record;
+  elements.policyImpactPreview.hidden = false;
+  elements.policyImpactPreview.scrollIntoView({ block: 'nearest' });
+  loadPolicyImpact();
+}
+
 function renderLifecycleRecords(model) {
   if (model.records.length === 0) {
     const row = document.createElement('tr');
@@ -2894,6 +3189,14 @@ function renderLifecycleRecords(model) {
     }
 
     const actions = createElement('td');
+    if (record.previewAvailable) {
+      const preview = createElement('button', 'row-command', t('preview.open'));
+      preview.type = 'button';
+      preview.addEventListener('click', () => openPolicyImpact(record));
+      actions.append(preview);
+    } else if (['draft', 'approved', 'failed'].includes(record.state)) {
+      actions.append(createElement('p', 'policy-meta', t('preview.notStored')));
+    }
     if (!offersLifecycleCommands()) {
       actions.append(createElement('p', 'empty-message', t('lifecycle.commandsNotServed')));
     } else if (session.mode !== 'local') {
@@ -3287,8 +3590,12 @@ function renderLifecycle(model) {
   renderLifecycleRecords(model);
   hideConflict();
   hideFailureReason();
+  previewRevision = null;
+  elements.policyImpactPreview.hidden = true;
   holdLifecycleRevisions(model);
 }
+
+elements.policyImpactApiFamily.addEventListener('change', loadPolicyImpact);
 
 const NOTIFICATION_SOURCED_CATEGORIES = new Set(['notification', 'drift']);
 
@@ -3666,6 +3973,7 @@ function translateErrorCode(code) {
 }
 
 async function loadCurrentScreen() {
+  previewLoads.invalidate();
   const generation = ++loadGeneration;
   activeLoadController?.abort();
   const controller = new AbortController();

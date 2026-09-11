@@ -72,6 +72,10 @@ import { projectNotifications } from './notifications-read-model-projector.mjs';
 import { createNotificationLedger } from './notification-ledger.mjs';
 import { assertAuthorizedReadScope } from './admin-read-authorization.mjs';
 import { DEPLOYED_THROTTLE_TIER_CODES } from './throttle-tier-codes.mjs';
+import {
+  createPolicyImpactPreview,
+  PolicyImpactPreviewError,
+} from './policy-impact-preview.mjs';
 
 // Reading governance and changing it are different authorities. An auditor sees every
 // scope and may change nothing, so the panel is not offered to them rather than offered
@@ -353,6 +357,37 @@ export function createLocalAdminServer({ source = createLocalGovernanceSource({ 
     scopeGroupId: SCOPE_GROUP_ID,
     clock,
   });
+  const impactPreview = createPolicyImpactPreview({
+    clock,
+    readActiveSnapshots: currentSnapshots,
+    async readDraft({ revisionId }) {
+      const held = await revisionStore.readConfigurationDraft({
+        scopeGroupId: SCOPE_GROUP_ID,
+        revisionId,
+      });
+      return held?.document ?? null;
+    },
+    async readRevision({ revisionId }) {
+      const held = await revisionStore.readConfigurationRevision({
+        scopeGroupId: SCOPE_GROUP_ID,
+        revisionId,
+      });
+      return held?.document ?? null;
+    },
+    async readActiveRevision() {
+      const revisions = await revisionStore.queryConfigurationRevisions({ scopeGroupId: SCOPE_GROUP_ID });
+      return revisions
+        .filter((revision) => revision.state === 'active')
+        .sort((left, right) => right.revisionNumber - left.revisionNumber)[0] ?? null;
+    },
+    resolvePolicy({ snapshots, request: policyRequest, targetContext }) {
+      return createLocalPolicyResolver(
+        targetContext.persona,
+        idGenerator,
+        async () => snapshots,
+      ).resolve(policyRequest);
+    },
+  });
 
   /**
    * What an edit starts from, and what the screens show. Before anything is published
@@ -421,6 +456,7 @@ export function createLocalAdminServer({ source = createLocalGovernanceSource({ 
         json(response, 405, { error: { code: 'method_not_allowed', requestId } }, requestId);
         return;
       }
+
       const handler = createEffectivePolicyHandler({
         resolver: createPersonaScopedResolver(idGenerator),
         personaGuard: isKnownPersona,
@@ -435,6 +471,60 @@ export function createLocalAdminServer({ source = createLocalGovernanceSource({ 
         createInvocationContext(requestId),
       );
       writeHandlerResponse(response, result);
+      return;
+    }
+
+    if (url.pathname === '/api/local/policy-impact-preview') {
+      if (request.method !== 'POST') {
+        json(response, 405, { error: { code: 'method_not_allowed', requestId } }, requestId);
+        return;
+      }
+      await seedRevisions();
+      let body;
+      try {
+        body = await readJsonBody(request);
+      } catch {
+        json(response, 400, { error: { code: 'body_not_readable', requestId } }, requestId);
+        return;
+      }
+      const persona = url.searchParams.get('persona') ?? 'governance-admin';
+      if (!isKnownPersona(persona)) {
+        json(response, 400, { error: { code: 'selection_not_supported', requestId } }, requestId);
+        return;
+      }
+      try {
+        const runtime = createPersonaRuntime(persona, idGenerator);
+        const identity = await runtime.identityAdapter.getVerifiedIdentity();
+        const context = await runtime.factory.create(identity);
+        const { authorization } = evaluateLocalAuthorization(context, await currentSnapshots());
+        assertAuthorizedReadScope({ authorization, scope: 'self' });
+        const result = await impactPreview.preview({
+          ...body,
+          targetContext: { persona, evidence: 'local-deterministic-persona' },
+        });
+        json(response, 200, result, requestId);
+      } catch (error) {
+        if (['scope-denied', 'membership-not-authoritative'].includes(error.code)) {
+          json(response, 403, { error: { code: 'preview_denied', requestId } }, requestId);
+          return;
+        }
+        if (error.code === 'preview-stale') {
+          json(response, 409, { error: { code: 'preview_stale', reasonCode: error.code, requestId } }, requestId);
+          return;
+        }
+        if (['revision-absent', 'draft-content-absent'].includes(error.code)) {
+          json(response, 404, { error: { code: 'preview_unavailable', reasonCode: error.code, requestId } }, requestId);
+          return;
+        }
+        const status = error instanceof PolicyImpactPreviewError ? 400 : 503;
+        json(response, status, {
+          error: {
+            code: status === 400 ? 'preview_request_invalid' : 'preview_unavailable',
+            reasonCode: error.code ?? 'preview-source-unavailable',
+            requestId,
+          },
+        }, requestId);
+      }
       return;
     }
 
@@ -1259,6 +1349,15 @@ export function createLocalAdminServer({ source = createLocalGovernanceSource({ 
           },
           viewerCode: viewer,
           selfApprovalGranted: source.capabilities.selfApprovalActors.includes(viewer),
+          storedProposalAvailableByRevision: Object.fromEntries(
+            await Promise.all(revisions.map(async (revision) => [
+              revision.revisionId,
+              (await revisionStore.readConfigurationDraft({
+                scopeGroupId: SCOPE_GROUP_ID,
+                revisionId: revision.revisionId,
+              })) !== null,
+            ])),
+          ),
         });
         json(response, 200, readModel, requestId);
       } catch (error) {

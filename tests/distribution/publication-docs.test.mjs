@@ -53,6 +53,39 @@ test('public numbered documentation is exactly 00 through 05 in complete languag
   assert.deepEqual(numbered, PAIRS.filter(([english]) => english.startsWith('docs/')).flat().sort());
 });
 
+test('local evaluation guidance separates reference and mock evidence from live APIM enforcement', () => {
+  for (const guide of ['docs/03-operations.md', 'docs/03-operations_ko.md']) {
+    const source = text(guide);
+    assert.ok(source.includes('node tools/evaluation/run-local-evaluation.mjs'));
+    assert.ok(source.includes('node --test tests/evaluation/*.test.mjs'));
+    assert.ok(source.includes('tests/policy/Test-InferencePolicy.ps1'));
+    assert.match(source, /HARD/);
+    assert.match(source, /SOFT/);
+    assert.match(source, /THROTTLE/);
+  }
+  assert.match(text('docs/03-operations.md'), /not an APIM emulator/);
+  assert.match(text('docs/03-operations.md'), /do not provide a live mode/);
+  assert.match(text('docs/03-operations_ko.md'), /APIM 에뮬레이터가 아니며/);
+  assert.match(text('docs/03-operations_ko.md'), /live 모드를 제공하지 않습니다/);
+});
+
+test('impact preview guidance limits the target to the authenticated caller and preserves publication approval', () => {
+  const english = text('docs/02-administration.md');
+  const korean = text('docs/02-administration_ko.md');
+  assert.match(english, /current authenticated caller only/);
+  assert.match(english, /including the application identity/);
+  assert.match(english, /does not save, approve, publish/);
+  assert.match(english, /changed active set or draft revision/);
+  assert.match(english, /not a measurement of live budget counters/);
+  assert.match(english, /inference-token-identity-not-established/);
+  assert.match(english, /does not replace the subject with an object ID/);
+  assert.match(korean, /현재 인증된 호출자만/);
+  assert.match(korean, /애플리케이션 신원도 포함/);
+  assert.match(korean, /저장, 승인, 게시, 토큰 소비 또는 활성 정책 변경을 수행하지 않습니다/);
+  assert.match(korean, /실시간 예산 카운터를 측정하거나/);
+  assert.match(korean, /inference-token-identity-not-established/);
+});
+
 test('redistribution guidance preserves notices without claiming legal approval', () => {
   const notice = text('NOTICE');
   assert.match(notice, /vendor\/THIRD-PARTY-NOTICES\.txt/);
