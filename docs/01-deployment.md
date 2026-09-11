@@ -347,6 +347,8 @@ azd provision --no-state --environment <environment> --no-prompt
 
 Wait until the **root provision command reports final success**. Outputs read while the root deployment is still running can belong to an earlier deployment.
 
+**Directory roster checkpoint, before the first code deployment:** the templates and hooks do not grant `GroupMember.Read.All`. If the customer wants Users and Groups membership listings, a Privileged Role Administrator (or Global Administrator) must perform the [grant and readback below](#entra-directory-reading-for-users-and-groups) now. Otherwise explicitly skip the roster; it remains unavailable without this optional tenant-wide permission. An identity that has already requested a Graph token may need **several hours** for a later grant to take effect: the Azure-side cache is around **24 hours**, cannot be forcibly refreshed by restarting or redeploying the Function, and is not a guaranteed propagation deadline.
+
 Read the final outputs, then deploy both services:
 
 ```powershell
@@ -525,16 +527,22 @@ The Users and Groups screen shows who belongs to each governed team. The control
 
 This step is optional. Entitlements, budgets, model allowlists, the gateway, and every other screen work without it. Skip it if you do not need the roster.
 
-Granting a Microsoft Graph application permission requires the **Privileged Role Administrator** role. Cloud Application Administrator, Application Administrator, and AI Administrator can consent for other APIs but not for Microsoft Graph app roles, so if you deployed with one of those, this is the step to hand to a directory administrator.
+Granting a Microsoft Graph application permission requires a **Privileged Role Administrator** or **Global Administrator**. Cloud Application Administrator, Application Administrator, and AI Administrator can consent for other APIs but not for Microsoft Graph app roles, so if you deployed with one of those, this is the step to hand to a directory administrator. Neither the templates nor `azd` hooks perform this grant automatically; the commands below are an explicit, customer-approved directory change, not a read-only check.
 
 The permission is `GroupMember.Read.All`, the least privileged application permission that reads group membership. It is tenant-wide because Microsoft Graph offers no per-group alternative. What narrows it is the product: it asks only about the groups the published governance set names as teams, and every request selects identifiers only, so no display name, principal name, or mail address is read or stored.
 
 Grant it to the control plane's managed identity:
 
 ```powershell
-$resourceGroup = azd env get-value GATEWAY_RESOURCE_GROUP_NAME
-$functionApp = azd env get-value CONTROL_PLANE_FUNCTION_APP
-$identity = az functionapp identity show -g $resourceGroup -n $functionApp --query principalId -o tsv
+$environment = '<environment>'
+$subscription = azd env get-value AZURE_SUBSCRIPTION_ID --environment $environment
+$tenant = azd env get-value ENTRA_TENANT_ID --environment $environment
+$resourceGroup = azd env get-value GATEWAY_RESOURCE_GROUP_NAME --environment $environment
+$functionApp = azd env get-value CONTROL_PLANE_FUNCTION_APP --environment $environment
+if ((az account show --query tenantId -o tsv) -ne $tenant) {
+  throw 'Sign in to the deployment tenant before granting a directory permission.'
+}
+$identity = az functionapp identity show --subscription $subscription -g $resourceGroup -n $functionApp --query principalId -o tsv
 
 $token = az account get-access-token --resource https://graph.microsoft.com --query accessToken -o tsv
 $headers = @{ Authorization = "Bearer $token"; 'Content-Type' = 'application/json' }
@@ -553,7 +561,9 @@ Read it back:
   Select-Object resourceDisplayName, appRoleId, createdDateTime
 ```
 
-**Grant this before the control plane first reads the directory, not after.** Azure caches a managed identity's tokens in its own back end, per resource URI, for around 24 hours, and Microsoft documents that a permission change can take several hours to take effect and that [a managed identity's token cannot be forced to refresh before it expires](https://learn.microsoft.com/entra/identity/managed-identities-azure-resources/managed-identity-best-practice-recommendations#limitation-of-using-managed-identities-for-authorization). Granting the role while you are setting the deployment up means the first token the control plane ever holds already carries it, and the screen works from the first projector run.
+**Grant and verify this before the first application deployment on a new environment, not after the control plane starts reading the directory.** Azure caches a managed identity's tokens in its own back end, per resource URI, for **around 24 hours**, and Microsoft documents that a permission change can take **several hours** to take effect and that [a managed identity's token cannot be forced to refresh before it expires](https://learn.microsoft.com/entra/identity/managed-identities-azure-resources/managed-identity-best-practice-recommendations#limitation-of-using-managed-identities-for-authorization). This installation order reduces the risk of caching a token without the role, but neither assignment readback nor the approximate cache duration guarantees immediate access or a fixed completion time.
+
+Readback proves that the directory assignment exists, not that every Function instance has a token carrying it. Do not repeat the POST if the exact assignment already exists. Confirm runtime readiness with a successful directory projection and a fresh Users and Groups reading after initial governance is published; a successful `azd deploy` alone does not prove roster readiness.
 
 If you grant it afterwards, expect delayed or mixed responses across instances
 until cached tokens refresh. Restarting the Function App does not guarantee a
@@ -569,9 +579,9 @@ $appId = az resource show -g $resourceGroup -n "appi-ctl-<name>-<environment>-<s
   --resource-type microsoft.insights/components --query "properties.AppId" -o tsv
 ```
 
-Query that component for `Directory reading projected.` and group the results by `customDimensions.HostInstanceId`. An outcome of `projected` from any instance means the permission is in place and the refusals are stale instances. `unavailable` from every instance, including ones started well after the grant, means the permission itself is not working yet.
+Query that component for `Directory reading projected.` and group the results by `customDimensions.HostInstanceId`. An outcome of `projected` proves that at least one instance completed a reading. Other instances may still hold stale tokens; inspect their recorded reasons rather than attributing every refusal to caching. If every instance reports `unavailable`, compare the exact assignment and grant time with the projector's failure reason; this alone does not prove that the assignment is absent.
 
-The projector runs hourly at minute 30, so a reading written by a healthy instance replaces the absent one without any action from you.
+The projector runs hourly at minute 30. This schedule wait is separate from permission propagation: once access works and initial governance is published, allow the next scheduled run to write a fresh reading. A healthy projection replaces the absent reading without manual intervention.
 
 To remove the permission, delete the assignment by its `id` with `DELETE /v1.0/servicePrincipals/{identity}/appRoleAssignments/{id}`.
 
@@ -642,7 +652,7 @@ node tools/distribution/Initialize-Governance.mjs `
   --input .\initial-governance.json
 ```
 
-The tool prints a verification address and a code by default. Open the address on any device (the same machine, a phone, or another computer) and enter the code to select an account carrying `Governance.Administer`. This works from a jump host, a container, or any other environment with no local browser. Pass `--sign-in browser` for the Authorization Code + PKCE flow instead, which opens a loopback redirect on `http://localhost:4173` and requires a browser on the same machine. Either way the token remains in memory, is validated for tenant, audience, role, and expiry, and is neither printed nor persisted.
+The tool prints a verification address and a code by default. Open the address on any device (the same machine, a phone, or another computer) and enter the code to select an account carrying `Governance.Administer`. This works from a jump host, a container, or any other environment with no local browser. Pass `--sign-in browser` for the Authorization Code + PKCE flow instead, which opens a native-client loopback redirect on `http://localhost:4173/governance-bootstrap` and requires a browser on the same machine. Its path is distinct from the local console's SPA redirect because Entra ignores localhost ports when matching redirect URIs. Update the deployed identity configuration before using this browser flow with an older deployment. Either way the token remains in memory, is validated for tenant, audience, role, and expiry, and is neither printed nor persisted.
 
 The control plane writes and reads back five targets before the revision becomes active:
 
@@ -823,9 +833,33 @@ Changes to a site's authentication settings take effect after a short delay rath
 
 `503 reading_unavailable / directory-snapshot-absent` means the control plane has never written a directory reading, not that the governed teams are empty. On a new deployment the usual cause is the missing Microsoft Graph permission described under [Entra: Directory Reading For Users And Groups](#entra-directory-reading-for-users-and-groups). If the permission is already assigned, the assignment may not yet be in the identity's token; that section describes how to tell the two apart from the projector's own record.
 
+### Impact preview reports missing caller evidence
+
+The administration resource API must request `groupMembershipClaims: 'SecurityGroup'`, as the current identity template does. This carries the signed-in user's security-group IDs without granting `GroupMember.Read.All` or enabling the optional directory roster. Do not substitute `ApplicationGroup`: groups assigned only to the gateway would be omitted from the administration token.
+
+An older installation can return `503 preview_unavailable / preview-source-unavailable` because missing group claims reach the policy resolver. Updated code reports the specific `caller-policy-evidence-unavailable` reason instead. Check the administration API registration, not the console client:
+
+```powershell
+az ad app show --id <administration-api-client-id> --query groupMembershipClaims
+```
+
+If the value is absent or different, apply the updated identity template to the same environment through the documented provisioning procedure, retaining the existing application IDs and role assignments. Then deploy the updated control plane and console. Open a new blank tab, enter the console URL, and sign in again for a new token; duplicating or reloading an existing tab may retain an unexpired token in session storage. Preview an unapproved saved draft. Reading the registration alone does not verify runtime success; confirm the preview result and that the active revision is unchanged. If testing a disposable draft, withdraw it without publishing.
+
+Token group overage also omits the group list. It remains explicitly unavailable, not an empty membership or a reason to grant directory permissions automatically. Never paste tokens into diagnostics or documentation. This token-refresh issue is separate from managed-identity Graph permission propagation and the directory projector schedule.
+
+### Initial governance sign-in fails with AADSTS9002326
+
+The initializer uses native PKCE, not a browser-origin SPA token exchange. Older registrations can collide between the SPA redirect `http://localhost:4173` and the native redirect `http://localhost`, because Entra ignores the port when matching localhost redirects. The current template separates the native path as `http://localhost/governance-bootstrap`; the initializer listens at `http://localhost:4173/governance-bootstrap` and redeems the code without an `Origin` header.
+
+Apply the updated identity template to the same environment, preserving the console application's ID, SPA redirects, and roles, and use the matching updated initializer. Verify both native and SPA redirect registrations before retrying initialization. Do not enable implicit flow, add a client secret, or remove the deployed console's SPA redirect to work around this error. Confirm the initial revision is active and all five publication targets are verified; a successful sign-in alone is not a successful initialization.
+
 ### The bootstrap tool asks for a sign-in that never completes
 
 The device code is valid for about fifteen minutes from the moment it is printed, and the tool waits for that whole window. If it expires, rerun the command for a new code. Nothing is published unless the sign-in succeeds and the administration route answers.
+
+### What-if reports no changes alongside coverage warnings
+
+`ExtensibleResourceNotSupported` means what-if did not evaluate a Microsoft Graph resource. `NestedDeploymentShortCircuited` means a nested deployment could not be expanded. A successful command or an empty changes list does not prove there are no identity or nested-resource changes. Retain the warnings, review the intended template and parameter changes, and verify exact application IDs, role assignments and resource state after deployment. For an upgrade, preserve the environment's naming inputs and compare against the prior deployed template; do not delete and recreate app registrations to work around incomplete preview coverage.
 
 ### A channel change is refused
 

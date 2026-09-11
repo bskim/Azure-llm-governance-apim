@@ -254,6 +254,17 @@
             <div id="directory-summary-grid" class="directory-summary-grid"></div>
           </section>
 
+          <section id="identifier-help" class="quality-banner authoring-panel identifier-help" aria-labelledby="identifier-help-title" hidden>
+            <div>
+              <p class="eyebrow" data-i18n="identifier.eyebrow">Identifier help</p>
+              <h2 id="identifier-help-title" data-i18n="identifier.title">Use the right identifier</h2>
+              <p class="policy-meta" data-i18n="identifier.help">These values are scoped and selected from authorized snapshots. Selecting or copying a value does not publish a change.</p>
+              <div id="identifier-current-caller" class="identifier-caller" aria-live="polite"></div>
+              <ul id="identifier-known-values" class="identifier-options"></ul>
+              <p id="identifier-copy-status" class="policy-meta" role="status" aria-live="polite"></p>
+            </div>
+          </section>
+
           <section id="access-edit" class="quality-banner authoring-panel" aria-labelledby="access-edit-title" hidden>
             <div>
               <p class="eyebrow" data-i18n="accessEdit.eyebrow">Proposing a change</p>
@@ -292,8 +303,10 @@
               <select id="subject-add-kind" aria-describedby="subject-add-help subject-add-error"></select>
               <label for="subject-add-id" data-i18n="subjectAdd.idLabel">Entitlement identifier</label>
               <input id="subject-add-id" type="text" autocomplete="off" aria-describedby="subject-add-help subject-add-error">
-              <label for="subject-add-key" data-i18n="subjectAdd.keyLabel">Target identifier</label>
-              <input id="subject-add-key" type="text" autocomplete="off" aria-describedby="subject-add-help subject-add-error">
+              <label id="subject-add-key-label" for="subject-add-key" data-i18n="subjectAdd.keyLabel">Target identifier</label>
+              <input id="subject-add-key" type="text" autocomplete="off" list="subject-add-key-options" aria-describedby="subject-add-help subject-add-key-help subject-add-error">
+              <datalist id="subject-add-key-options"></datalist>
+              <p id="subject-add-key-help" class="policy-meta"></p>
               <label for="subject-add-team" data-i18n="subjectAdd.teamLabel">Governed team</label>
               <select id="subject-add-team" aria-describedby="subject-add-help subject-add-error"></select>
               <label for="subject-add-models" data-i18n="subjectAdd.modelsLabel">Models this entitlement allows</label>
@@ -324,12 +337,15 @@
               <select id="assignment-add-role" aria-describedby="assignment-add-help assignment-add-error"></select>
               <label for="assignment-add-assignee-kind" data-i18n="assignmentAdd.assigneeKindLabel">Assignee type</label>
               <select id="assignment-add-assignee-kind" aria-describedby="assignment-add-help assignment-add-error"></select>
-              <label for="assignment-add-assignee-key" data-i18n="assignmentAdd.assigneeKeyLabel">Assignee identifier</label>
-              <input id="assignment-add-assignee-key" type="text" autocomplete="off" aria-describedby="assignment-add-help assignment-add-error">
+              <label id="assignment-add-assignee-key-label" for="assignment-add-assignee-key" data-i18n="assignmentAdd.assigneeKeyLabel">Assignee identifier</label>
+              <input id="assignment-add-assignee-key" type="text" autocomplete="off" list="assignment-add-assignee-options" aria-describedby="assignment-add-help assignment-add-assignee-key-help assignment-add-error">
+              <datalist id="assignment-add-assignee-options"></datalist>
+              <p id="assignment-add-assignee-key-help" class="policy-meta"></p>
               <label for="assignment-add-scope-kind" data-i18n="assignmentAdd.scopeKindLabel">Scope</label>
               <select id="assignment-add-scope-kind" aria-describedby="assignment-add-help assignment-add-error"></select>
-              <label for="assignment-add-scope-key" data-i18n="assignmentAdd.scopeKeyLabel">Team</label>
+              <label id="assignment-add-scope-key-label" for="assignment-add-scope-key" data-i18n="assignmentAdd.scopeKeyLabel">Team</label>
               <select id="assignment-add-scope-key" aria-describedby="assignment-add-help assignment-add-error"></select>
+              <p id="assignment-add-scope-key-help" class="policy-meta"></p>
               <label for="assignment-add-reason" data-i18n="assignmentAdd.reasonLabel">Reason</label>
               <input id="assignment-add-reason" type="text" autocomplete="off" value="delegated-team-administration" aria-describedby="assignment-add-help assignment-add-error">
               <p id="assignment-add-error" class="policy-meta" role="alert"></p>
@@ -342,10 +358,14 @@
               <p class="eyebrow" data-i18n="teamEdit.eyebrow">Proposing a change</p>
               <h2 id="team-edit-title" data-i18n="teamEdit.title">Which directory group is which team</h2>
               <p id="team-edit-help" class="policy-meta" data-i18n="teamEdit.help">Who belongs to a group is changed in the directory. This decides which groups this product governs as teams.</p>
-              <label for="team-edit-key" data-i18n="teamEdit.keyLabel">Team name</label>
-              <input id="team-edit-key" type="text" autocomplete="off" aria-describedby="team-edit-help team-edit-error">
-              <label for="team-edit-group" data-i18n="teamEdit.groupLabel">Directory group</label>
-              <input id="team-edit-group" type="text" autocomplete="off" aria-describedby="team-edit-help team-edit-error">
+              <label id="team-edit-key-label" for="team-edit-key" data-i18n="teamEdit.keyLabel">Team name</label>
+              <input id="team-edit-key" type="text" autocomplete="off" list="team-edit-key-options" aria-describedby="team-edit-help team-edit-key-help team-edit-error">
+              <datalist id="team-edit-key-options"></datalist>
+              <p id="team-edit-key-help" class="policy-meta"></p>
+              <label id="team-edit-group-label" for="team-edit-group" data-i18n="teamEdit.groupLabel">Directory group</label>
+              <input id="team-edit-group" type="text" autocomplete="off" list="team-edit-group-options" aria-describedby="team-edit-help team-edit-group-help team-edit-error">
+              <datalist id="team-edit-group-options"></datalist>
+              <p id="team-edit-group-help" class="policy-meta"></p>
               <label for="team-edit-existing" data-i18n="teamEdit.existingLabel">Team to remove</label>
               <select id="team-edit-existing" aria-describedby="team-edit-help team-edit-error"></select>
               <label for="team-edit-reason" data-i18n="teamEdit.reasonLabel">Reason for removing</label>
@@ -534,8 +554,10 @@
               <p id="model-add-help" class="policy-meta" data-i18n="modelAdd.help">Everything the catalogue keeps is read from the deployment itself, so there is nothing here to type. A model must be entitled to nobody before it can be removed.</p>
               <label for="model-add-deployment" data-i18n="modelAdd.deploymentLabel">Deployment to bring under governance</label>
               <select id="model-add-deployment" aria-describedby="model-add-help model-add-error"></select>
+              <p class="policy-meta" data-i18n="modelAdd.deploymentHelp">Use the provider deployment name, not the logical model alias used by entitlements.</p>
               <label for="model-add-target" data-i18n="modelAdd.targetLabel">Model to remove</label>
               <select id="model-add-target" aria-describedby="model-add-help model-add-error"></select>
+              <p class="policy-meta" data-i18n="modelAdd.targetHelp">Use the logical model alias from the catalogue, not the provider deployment name.</p>
               <label for="model-add-reason" data-i18n="modelAdd.reasonLabel">Reason for removing</label>
               <select id="model-add-reason" aria-describedby="model-add-help model-add-error"></select>
               <p id="model-add-error" class="policy-meta" role="alert"></p>
@@ -840,6 +862,17 @@
             </div>
           </section>
         </div>
+        <section id="removal-workflow" class="quality-banner authoring-panel removal-workflow" aria-labelledby="removal-title" hidden>
+          <div>
+            <p class="eyebrow" data-i18n="removal.eyebrow">Reviewing a proposed removal</p>
+            <h2 id="removal-title">Removal review</h2>
+            <p id="removal-details" class="policy-meta"></p>
+            <p class="policy-meta" data-i18n="removal.safety">This creates a draft only. Active policy remains unchanged until approval and publishing; provider deployments and Entra groups are not deleted.</p>
+            <div id="removal-references"></div>
+            <p id="removal-error" class="policy-meta" role="alert"></p>
+            <div id="removal-actions"></div>
+          </div>
+        </section>
       </main>
     </div>
     <script type="module" src="/app.mjs"></script>

@@ -345,6 +345,8 @@ azd provision --no-state --environment <environment> --no-prompt
 
 **최상위 프로비저닝 명령이 최종 성공을 보고할 때까지** 기다립니다. 최상위 배포가 아직 실행 중일 때 읽은 출력은 이전 배포의 것일 수 있습니다.
 
+**최초 코드 배포 전 디렉터리 명단 확인 단계:** 템플릿과 후크는 `GroupMember.Read.All`을 자동으로 부여하지 않습니다. 고객이 사용자 및 그룹 명단을 사용하려면 Privileged Role Administrator 또는 Global Administrator가 지금 [아래 권한 부여 및 재조회 절차](#entra-users--groups-화면을-위한-디렉터리-읽기-권한)를 수행해야 합니다. 그렇지 않으면 명단 사용을 명시적으로 건너뜁니다. 선택 사항인 테넌트 전체 권한이 없으면 명단은 사용할 수 없습니다. 이미 Graph 토큰을 요청한 ID는 나중에 권한을 부여해도 반영에 **수 시간**이 걸릴 수 있습니다. Azure 측 캐시는 **약 24시간**이며 Function 재시작이나 재배포로 강제 갱신할 수 없고, 반영 완료를 보장하는 기한도 아닙니다.
+
 최종 출력을 확인한 뒤 두 서비스를 모두 배포합니다.
 
 ```powershell
@@ -523,16 +525,22 @@ Users 및 Groups 화면에는 거버넌스 대상 팀별 구성원이 표시됩�
 
 이 단계는 선택 사항입니다. 이용 권한, 예산, 모델 허용 목록, 게이트웨이 및 다른 모든 화면은 이 단계 없이도 작동합니다. 명단이 필요하지 않다면 건너뛸 수 있습니다.
 
-Microsoft Graph 애플리케이션 권한을 부여하려면 **Privileged Role Administrator** 역할이 필요합니다. Cloud Application Administrator, Application Administrator, AI Administrator는 다른 API에는 동의할 수 있지만 Microsoft Graph 앱 역할에는 동의할 수 없습니다. 이러한 역할 중 하나로 배포했다면 이 단계는 디렉터리 관리자에게 요청해야 합니다.
+Microsoft Graph 애플리케이션 권한을 부여하려면 **Privileged Role Administrator** 또는 **Global Administrator** 역할이 필요합니다. Cloud Application Administrator, Application Administrator, AI Administrator는 다른 API에는 동의할 수 있지만 Microsoft Graph 앱 역할에는 동의할 수 없습니다. 이러한 역할 중 하나로 배포했다면 이 단계는 디렉터리 관리자에게 요청해야 합니다. 템플릿과 `azd` 후크는 이 권한을 자동으로 부여하지 않습니다. 아래 명령은 읽기 전용 확인이 아니라 고객이 명시적으로 승인한 디렉터리 변경입니다.
 
 이 권한은 `GroupMember.Read.All`이며 그룹 멤버 자격을 읽을 수 있는 애플리케이션 권한 중 가장 제한적입니다. Microsoft Graph에서 그룹 단위 대안을 제공하지 않으므로 테넌트 전체에 적용됩니다. 제품에서 실제 사용 범위를 좁힙니다. 게시된 거버넌스 세트에서 팀으로 지정한 그룹만 조회하며, 모든 요청에서 식별자만 선택하므로 표시 이름, 보안 주체 이름, 메일 주소는 읽거나 저장하지 않습니다.
 
 이 권한은 컨트롤 플레인의 관리 ID에 부여합니다.
 
 ```powershell
-$resourceGroup = azd env get-value GATEWAY_RESOURCE_GROUP_NAME
-$functionApp = azd env get-value CONTROL_PLANE_FUNCTION_APP
-$identity = az functionapp identity show -g $resourceGroup -n $functionApp --query principalId -o tsv
+$environment = '<environment>'
+$subscription = azd env get-value AZURE_SUBSCRIPTION_ID --environment $environment
+$tenant = azd env get-value ENTRA_TENANT_ID --environment $environment
+$resourceGroup = azd env get-value GATEWAY_RESOURCE_GROUP_NAME --environment $environment
+$functionApp = azd env get-value CONTROL_PLANE_FUNCTION_APP --environment $environment
+if ((az account show --query tenantId -o tsv) -ne $tenant) {
+  throw 'Sign in to the deployment tenant before granting a directory permission.'
+}
+$identity = az functionapp identity show --subscription $subscription -g $resourceGroup -n $functionApp --query principalId -o tsv
 
 $token = az account get-access-token --resource https://graph.microsoft.com --query accessToken -o tsv
 $headers = @{ Authorization = "Bearer $token"; 'Content-Type' = 'application/json' }
@@ -551,7 +559,9 @@ Invoke-RestMethod -Method Post -Headers $headers -Body $body `
   Select-Object resourceDisplayName, appRoleId, createdDateTime
 ```
 
-**컨트롤 플레인이 디렉터리를 처음 읽기 전에 이 권한을 부여해야 하며, 읽은 뒤에 부여하면 안 됩니다.** Azure는 관리 ID의 토큰을 리소스 URI별로 자체 백엔드에 약 24시간 동안 캐시합니다. Microsoft 문서에 따르면 권한 변경이 적용되기까지 몇 시간이 걸릴 수 있으며, [관리 ID의 토큰은 만료되기 전에 강제로 새로 고칠 수 없습니다](https://learn.microsoft.com/entra/identity/managed-identities-azure-resources/managed-identity-best-practice-recommendations#limitation-of-using-managed-identities-for-authorization). 배포를 구성하는 동안 이 역할을 부여하면 컨트롤 플레인이 처음 받는 토큰에 역할이 이미 포함되므로 첫 프로젝터 실행부터 화면이 정상적으로 작동합니다.
+**새 환경에서는 최초 애플리케이션 배포 전에 이 권한을 부여하고 확인하며, 컨트롤 플레인이 디렉터리를 읽기 시작한 뒤로 미루지 않습니다.** Azure는 관리 ID의 토큰을 리소스 URI별로 자체 백엔드에 **약 24시간** 동안 캐시합니다. Microsoft 문서에 따르면 권한 변경이 적용되기까지 **수 시간**이 걸릴 수 있으며, [관리 ID의 토큰은 만료되기 전에 강제로 새로 고칠 수 없습니다](https://learn.microsoft.com/entra/identity/managed-identities-azure-resources/managed-identity-best-practice-recommendations#limitation-of-using-managed-identities-for-authorization). 이 설치 순서는 역할이 없는 토큰이 캐시될 위험을 줄이지만, 역할 할당의 재조회나 대략적인 캐시 시간이 즉시 접근 가능함 또는 일정한 완료 시점을 보장하지는 않습니다.
+
+재조회는 디렉터리 역할 할당이 존재함을 증명할 뿐, 모든 Function 인스턴스가 해당 역할을 담은 토큰을 가지고 있음을 증명하지는 않습니다. 정확한 역할 할당이 이미 존재하면 POST를 반복하지 않습니다. 초기 거버넌스를 게시한 뒤 디렉터리 프로젝션 성공과 최신 사용자 및 그룹 읽기 결과로 런타임 준비 상태를 확인합니다. `azd deploy` 성공만으로 명단 화면의 준비가 완료되었다고 판단하지 않습니다.
 
 권한을 나중에 부여하면 캐시된 토큰이 갱신될 때까지 인스턴스마다 적용이
 지연되거나 서로 다른 응답이 나올 수 있습니다. Function App을 다시 시작해도
@@ -567,9 +577,9 @@ $appId = az resource show -g $resourceGroup -n "appi-ctl-<name>-<environment>-<s
   --resource-type microsoft.insights/components --query "properties.AppId" -o tsv
 ```
 
-해당 구성 요소에서 `Directory reading projected.`를 쿼리하고 결과를 `customDimensions.HostInstanceId`로 그룹화합니다. 어느 인스턴스에서든 `projected` 결과가 나오면 권한이 적용된 것이며, 거부 응답은 오래된 인스턴스에서 발생한 것입니다. 권한 부여 후 한참 뒤에 시작된 인스턴스를 포함해 모든 인스턴스에서 `unavailable`이 나오면 권한 자체가 아직 작동하지 않는 것입니다.
+해당 구성 요소에서 `Directory reading projected.`를 쿼리하고 결과를 `customDimensions.HostInstanceId`로 그룹화합니다. `projected`는 적어도 한 인스턴스가 읽기를 완료했음을 증명합니다. 다른 인스턴스에는 오래된 토큰이 남아 있을 수 있지만 모든 거부를 캐시 때문이라고 단정하지 않고 기록된 이유를 확인합니다. 모든 인스턴스가 `unavailable`을 보고하면 정확한 역할 할당과 부여 시각을 프로젝터의 실패 이유와 비교합니다. 이 결과만으로 역할 할당이 없다고 단정하지 않습니다.
 
-프로젝터는 매시 30분에 실행되므로, 정상 인스턴스에서 기록한 읽기 결과가 별도 조치 없이 누락된 값을 대체합니다.
+프로젝터는 매시 30분에 실행됩니다. 이 일정 대기는 권한 반영 지연과 별개입니다. 접근이 가능해지고 초기 거버넌스가 게시된 뒤에도 다음 정기 실행에서 최신 읽기 결과가 작성될 때까지 기다립니다. 정상 프로젝션이 작성되면 별도 조치 없이 기존의 읽기 결과 부재 상태를 대체합니다.
 
 권한을 제거할 때는 `id`를 사용하여 `DELETE /v1.0/servicePrincipals/{identity}/appRoleAssignments/{id}`로 역할 할당을 삭제합니다.
 
@@ -640,7 +650,7 @@ node tools/distribution/Initialize-Governance.mjs `
   --input .\initial-governance.json
 ```
 
-이 도구는 기본적으로 확인 주소와 코드를 출력합니다. 같은 컴퓨터, 휴대폰 또는 다른 컴퓨터에서 해당 주소를 열고 코드를 입력한 뒤 `Governance.Administer` 역할이 있는 계정을 선택합니다. 이 방식은 점프 호스트, 컨테이너 등 로컬 브라우저가 없는 환경에서도 작동합니다. 대신 `--sign-in browser`를 전달하면 Authorization Code + PKCE 흐름을 사용합니다. 이 경우 `http://localhost:4173`에서 루프백 리디렉션이 열리므로 같은 컴퓨터에 브라우저가 있어야 합니다. 어느 방식을 사용하든 토큰은 메모리에만 남습니다. 테넌트, 대상, 역할, 만료 시각을 검증하며 토큰을 출력하거나 저장하지 않습니다.
+이 도구는 기본적으로 확인 주소와 코드를 출력합니다. 같은 컴퓨터, 휴대폰 또는 다른 컴퓨터에서 해당 주소를 열고 코드를 입력한 뒤 `Governance.Administer` 역할이 있는 계정을 선택합니다. 이 방식은 점프 호스트, 컨테이너 등 로컬 브라우저가 없는 환경에서도 작동합니다. 대신 `--sign-in browser`를 전달하면 Authorization Code + PKCE 흐름을 사용합니다. 이 경우 `http://localhost:4173/governance-bootstrap`에서 네이티브 클라이언트용 루프백 리디렉션이 열리므로 같은 컴퓨터에 브라우저가 있어야 합니다. Entra는 localhost 리디렉션을 비교할 때 포트를 무시하므로 로컬 콘솔의 SPA 리디렉션과 다른 경로를 사용합니다. 이전 배포에서 이 브라우저 흐름을 사용하려면 배포된 ID 구성을 먼저 업데이트합니다. 어느 방식을 사용하든 토큰은 메모리에만 남습니다. 테넌트, 대상, 역할, 만료 시각을 검증하며 토큰을 출력하거나 저장하지 않습니다.
 
 컨트롤 플레인은 리비전을 활성화하기 전에 다음 다섯 가지 대상을 쓰고 다시 읽어 확인합니다.
 
@@ -819,9 +829,33 @@ az rest --method get --url "https://management.azure.com/subscriptions/<subscrip
 
 `503 reading_unavailable / directory-snapshot-absent`는 컨트롤 플레인에서 디렉터리 읽기를 한 번도 기록하지 않았다는 뜻이며, 거버넌스 대상 팀이 비어 있다는 뜻은 아닙니다. 새 배포에서는 [Entra: Users & Groups 화면을 위한 디렉터리 읽기 권한](#entra-users--groups-화면을-위한-디렉터리-읽기-권한)에서 설명한 Microsoft Graph 권한 누락이 흔한 원인입니다. 권한이 이미 할당되어 있다면 해당 할당이 아직 ID 토큰에 반영되지 않았을 수 있습니다. 두 경우를 프로젝터 자체 기록으로 구분하는 방법은 해당 절에서 설명합니다.
 
+### 영향 미리 보기에 호출자 근거가 없다고 표시된다
+
+관리 리소스 API는 현재 신원 템플릿처럼 `groupMembershipClaims: 'SecurityGroup'`을 요청해야 합니다. 로그인한 사용자의 보안 그룹 ID를 토큰에 포함하는 설정이며, `GroupMember.Read.All`을 부여하거나 선택적 디렉터리 명단을 활성화하지 않습니다. `ApplicationGroup`으로 대체하면 게이트웨이에만 할당된 그룹이 관리 토큰에서 빠집니다.
+
+이전 설치에서는 그룹 클레임 누락이 정책 해석기에 전달되어 `503 preview_unavailable / preview-source-unavailable`이 발생할 수 있습니다. 업데이트한 코드는 구체적인 `caller-policy-evidence-unavailable` 이유를 반환합니다. 콘솔 클라이언트가 아니라 관리 API 등록을 확인합니다.
+
+```powershell
+az ad app show --id <administration-api-client-id> --query groupMembershipClaims
+```
+
+값이 없거나 다르면 문서의 프로비저닝 절차를 통해 같은 환경에 업데이트한 신원 템플릿을 적용하되, 기존 애플리케이션 ID와 역할 할당을 유지합니다. 업데이트한 컨트롤 플레인과 콘솔을 배포한 뒤 빈 새 탭에 콘솔 URL을 입력하고 다시 로그인하여 새 토큰을 받습니다. 기존 탭의 복제나 새로고침은 세션 저장소의 만료되지 않은 토큰을 계속 사용할 수 있습니다. 승인하지 않은 저장된 초안을 미리 봅니다. 등록 설정의 재조회만으로 런타임 성공이 입증되지는 않습니다. 비교 결과와 활성 리비전이 변하지 않았음을 확인하고, 검증용 초안이라면 게시하지 말고 철회합니다.
+
+토큰의 그룹 개수가 한도를 초과해도 그룹 목록이 생략됩니다. 이를 빈 소속으로 간주하거나 디렉터리 권한을 자동 부여하지 않고 명시적으로 비교 불가 처리합니다. 토큰을 진단 출력이나 문서에 붙여 넣지 않습니다. 이 토큰 갱신 문제는 관리 ID의 Graph 권한 반영 지연 및 디렉터리 프로젝터 스케줄과 별개입니다.
+
+### 최초 거버넌스 로그인에서 AADSTS9002326이 발생한다
+
+초기화 도구는 브라우저 Origin을 사용하는 SPA 토큰 교환이 아니라 네이티브 PKCE를 사용합니다. Entra는 localhost 리디렉션을 일치시킬 때 포트를 무시하므로, 이전 등록에서는 SPA 리디렉션 `http://localhost:4173`과 네이티브 리디렉션 `http://localhost`가 충돌할 수 있습니다. 현재 템플릿은 네이티브 경로를 `http://localhost/governance-bootstrap`으로 분리하며, 초기화 도구는 `http://localhost:4173/governance-bootstrap`에서 수신하고 `Origin` 헤더 없이 코드를 교환합니다.
+
+같은 환경에 업데이트한 신원 템플릿을 적용하면서 콘솔 애플리케이션 ID, SPA 리디렉션 및 역할을 유지하고, 그에 맞는 업데이트한 초기화 도구를 사용합니다. 네이티브와 SPA 리디렉션 등록을 모두 확인한 뒤 초기화를 재시도합니다. 이 오류를 우회하려고 implicit flow를 활성화하거나 클라이언트 비밀을 추가하거나 배포된 콘솔의 SPA 리디렉션을 제거하지 않습니다. 초기 리비전이 활성 상태이고 게시 대상 다섯 개가 모두 검증됐는지 확인합니다. 로그인 성공만으로 초기화 성공을 판단하지 않습니다.
+
 ### bootstrap 도구가 요청한 로그인이 끝나지 않는다
 
 디바이스 코드는 출력된 순간부터 약 15분 동안 유효하며, 도구는 그 시간 동안 계속 기다립니다. 코드가 만료되면 명령을 다시 실행하여 새 코드를 받습니다. 로그인에 성공하고 관리 경로가 응답하기 전까지는 아무것도 게시되지 않습니다.
+
+### what-if가 검증 범위 경고와 함께 변경 없음으로 표시된다
+
+`ExtensibleResourceNotSupported`는 what-if에서 Microsoft Graph 리소스를 평가하지 않았다는 뜻입니다. `NestedDeploymentShortCircuited`는 중첩 배포를 확장하지 못했다는 뜻입니다. 명령 성공이나 빈 변경 목록이 신원 또는 중첩 리소스의 변경 없음을 입증하지는 않습니다. 경고를 보존하고 의도한 템플릿과 매개변수 변경을 검토하며, 배포 후 정확한 애플리케이션 ID, 역할 할당 및 리소스 상태를 재조회합니다. 업그레이드에서는 해당 환경의 이름 생성 입력을 유지하고 이전 배포 템플릿과 비교합니다. 미리 보기 범위가 불완전하다는 이유로 앱 등록을 삭제하고 다시 만들지 않습니다.
 
 ### 채널 변경이 거부된다
 

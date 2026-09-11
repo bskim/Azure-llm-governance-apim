@@ -86,6 +86,22 @@ test('impact preview guidance limits the target to the authenticated caller and 
   assert.match(korean, /inference-token-identity-not-established/);
 });
 
+test('removal guidance requires explicit reference review without cloud deletion or history rewriting', () => {
+  const english = text('docs/02-administration.md');
+  const korean = text('docs/02-administration_ko.md');
+  assert.match(english, /Nothing is selected automatically/);
+  assert.match(english, /rejects a stale plan, incomplete acknowledgments/);
+  assert.match(english, /Historical revisions remain unchanged/);
+  assert.match(english, /not cloud cleanup/);
+  assert.match(english, /global read scope/);
+  assert.match(english, /changes to budgets also require budget-write authority/);
+  assert.match(korean, /자동으로 선택되는 항목은 없습니다/);
+  assert.match(korean, /과거 리비전은 변경하지 않습니다/);
+  assert.match(korean, /클라우드 정리가 아니라 설정 변경/);
+  assert.match(korean, /전역 읽기 범위/);
+  assert.match(korean, /예산 쓰기 권한도 필요/);
+});
+
 test('redistribution guidance preserves notices without claiming legal approval', () => {
   const notice = text('NOTICE');
   assert.match(notice, /vendor\/THIRD-PARTY-NOTICES\.txt/);
@@ -99,6 +115,50 @@ test('redistribution guidance preserves notices without claiming legal approval'
     assert.match(text(readme), /\]\(NOTICE\)/);
     assert.match(text(readme), /vendor\/THIRD-PARTY-NOTICES\.txt/);
   }
+});
+
+test('budget observation guidance distinguishes aggregate coverage from versioned APIM counters', () => {
+  const english = text('docs/02-administration.md');
+  const korean = text('docs/02-administration_ko.md');
+  assert.match(english, /latest complete observed window/);
+  assert.match(english, /remaining tokens stay unavailable \(`null`\)/);
+  assert.match(english, /does not collect policy-version or APIM-counter identity evidence/);
+  assert.match(english, /does not infer those values.*backfill old records/);
+  assert.match(english, /Changing a budget version can change APIM counter identity/);
+  assert.match(korean, /완전하게 관측된 마지막 윈도/);
+  assert.match(korean, /확인 불가\(`null`\)/);
+  assert.match(korean, /정책 버전이나 APIM 카운터 식별 근거를 수집하지 않으므로/);
+  assert.match(korean, /과거 기록을 소급해서 채우지 않습니다/);
+});
+
+test('ownership generation guidance preserves evidence provenance and the preview-only boundary', () => {
+  for (const name of ['docs/03-operations.md', 'docs/03-operations_ko.md']) {
+    const source = text(name);
+    assert.ok(source.includes('ownership-contract.mjs generate --input'));
+    assert.ok(source.includes('-EvidenceBundlePath'));
+    assert.ok(source.includes('OWNERSHIP_GENERATION_INPUT_FILE'));
+    assert.ok(source.includes('OWNERSHIP_EVIDENCE_BUNDLE_FILE'));
+    assert.ok(source.includes('llm-governance-creation-receipt/v1'));
+    assert.ok(source.includes('llm-governance-authoritative-readback/v1'));
+  }
+  assert.match(text('docs/03-operations.md'), /Outputs alone do not prove/);
+  assert.match(text('docs/03-operations.md'), /does not capture cloud receipts or readback/);
+  assert.match(text('docs/03-operations.md'), /no deletion or purge/);
+  assert.match(text('docs/03-operations_ko.md'), /별도로 검증된 소유권과 명시적인 단계별 승인/);
+});
+
+test('identifier guidance separates raw authoring identifiers from directory codes and derived telemetry keys', () => {
+  const english = text('docs/02-administration.md');
+  const korean = text('docs/02-administration_ko.md');
+  assert.match(english, /matches the gateway token's `sub`/);
+  assert.match(english, /matches `azp` or `appid`/);
+  assert.match(english, /They are not entitlement targets/);
+  assert.match(english, /do not establish the coding client's inference-token identity/);
+  assert.match(english, /does not derive these pseudonyms.*receive the derivation secret/);
+  assert.match(english, /failed clipboard operation.*instead of claiming success/);
+  assert.match(korean, /이 값은 이용 권한의 대상이 아닙니다/);
+  assert.match(korean, /추론 토큰 신원을 확인한 결과가 아닙니다/);
+  assert.match(korean, /클립보드 작업이 실패하면 성공했다고 표시하지 않고/);
 });
 
 function measureSections(markdown) {
@@ -361,11 +421,11 @@ test('entitlement guidance explains editable limits without implying draft activ
   const korean = text('docs/02-administration_ko.md');
   assert.match(english, /requests per minute, tokens per minute, token quota, and quota period/);
   assert.match(english, /clearing its field does not remove the persisted limit/);
-  assert.match(english, /subject or application key used by the gateway/);
+  assert.match(english, /gateway subject \(`sub`\) or application\/client identifier \(`azp` or `appid`\)/);
   assert.match(english, /still shows the active binding, not the draft's proposed values/);
   assert.match(korean, /분당 요청 수, 분당 토큰 수, 토큰 쿼터와 기간/);
   assert.match(korean, /필드를 비워도 저장된 한도는 제거되지 않습니다/);
-  assert.match(korean, /게이트웨이가 사용하는 subject 또는 application 키/);
+  assert.match(korean, /게이트웨이 주체\(`sub`\) 또는 애플리케이션\/클라이언트 식별자\(`azp` 또는 `appid`\)/);
   assert.match(korean, /초안의 제안 값이 아니라 활성 바인딩의 값/);
   for (const guide of [english, korean]) {
     assert.match(guide, /state: revoked/);

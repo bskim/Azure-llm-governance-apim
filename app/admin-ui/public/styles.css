@@ -183,11 +183,19 @@ code, .config-summary, .metric-meta { overflow-wrap: anywhere; word-break: break
 .directory-table td:nth-child(2) .status-label { margin: 2px 4px 2px 0; }
 .policy-reason { margin: 8px 0 4px; max-width: 320px; font-weight: 600; }
 .policy-meta { margin: 3px 0 0; color: var(--cp-text-muted); font-size: 12px; overflow-wrap: anywhere; }
+.authoring-panel .removal-reference { display: flex; align-items: flex-start; gap: 8px; margin: 12px 0; font-weight: 400; overflow-wrap: anywhere; }
+.removal-reference input[type="checkbox"] { flex: 0 0 auto; width: auto; margin: 3px 0 0; }
+#removal-actions .row-command:disabled { opacity: 0.55; cursor: not-allowed; }
 .policy-disclosure { max-width: none; }
 .policy-disclosure summary { min-height: 32px; display: flex; align-items: center; }
 .policy-source-list { display: grid; gap: 10px; margin: 10px 0 0; padding: 0; list-style: none; }
 .policy-source-list li { display: grid; gap: 4px; min-width: 240px; padding: 10px; border-left: 3px solid var(--cp-border-strong); background: var(--cp-surface-soft); font-size: 12px; }
 .policy-source-list li > span:not(.status-label) { color: var(--cp-text-muted); overflow-wrap: anywhere; }
+.identifier-caller,
+.identifier-option { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.identifier-caller { margin: 12px 0; }
+.identifier-options { display: grid; gap: 8px; list-style: none; margin: 0; padding: 0; }
+.identifier-option code { user-select: text; overflow-wrap: anywhere; }
 .preview-outcomes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin: 18px 0; }
 .preview-outcome { min-width: 0; padding: 18px; border: 1px solid var(--cp-border); border-radius: 8px; background: var(--cp-surface); }
 .preview-section { min-width: 0; margin: 20px 0 0; padding-top: 14px; border-top: 1px solid var(--cp-border); }

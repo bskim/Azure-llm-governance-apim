@@ -1,5 +1,7 @@
 import { localeTag, resolveLocale, resolveModeTranslationKey, translate } from './i18n.mjs';
 import { createLatestLoad } from './latest-load.mjs';
+import { createBudgetObservationDetails } from './budget-observation-view.mjs';
+import { buildRemovalPlanPayload, buildRemovalProposalPayload, validateRemovalPlan } from './removal-workflow.mjs';
 import { createLocalSession, loadSession, readSessionConfig } from './session.mjs';
 import {
   BUDGET_ACTIONS,
@@ -66,6 +68,10 @@ const elements = {
   directoryCaption: document.querySelector('#directory-table-caption'),
   directoryBody: document.querySelector('#directory-table-body'),
   directoryReadingPanels: [...document.querySelectorAll('.directory-reading-panel')],
+  identifierHelp: document.querySelector('#identifier-help'),
+  identifierCaller: document.querySelector('#identifier-current-caller'),
+  identifierOptions: document.querySelector('#identifier-known-values'),
+  identifierStatus: document.querySelector('#identifier-copy-status'),
   environment: document.querySelector('.environment-chip'),
   viewerLabel: document.querySelector('.sidebar-foot-label'),
   budgetsContent: document.querySelector('#budgets-content'),
@@ -127,7 +133,10 @@ const elements = {
   subjectAdd: document.querySelector('#subject-add'),
   subjectAddKind: document.querySelector('#subject-add-kind'),
   subjectAddId: document.querySelector('#subject-add-id'),
+  subjectAddKeyLabel: document.querySelector('#subject-add-key-label'),
   subjectAddKey: document.querySelector('#subject-add-key'),
+  subjectAddKeyOptions: document.querySelector('#subject-add-key-options'),
+  subjectAddKeyHelp: document.querySelector('#subject-add-key-help'),
   subjectAddTeam: document.querySelector('#subject-add-team'),
   subjectAddModels: document.querySelector('#subject-add-models'),
   subjectAddRpm: document.querySelector('#subject-add-rpm'),
@@ -141,15 +150,26 @@ const elements = {
   assignmentAddId: document.querySelector('#assignment-add-id'),
   assignmentAddRole: document.querySelector('#assignment-add-role'),
   assignmentAddAssigneeKind: document.querySelector('#assignment-add-assignee-kind'),
+  assignmentAddAssigneeKeyLabel: document.querySelector('#assignment-add-assignee-key-label'),
   assignmentAddAssigneeKey: document.querySelector('#assignment-add-assignee-key'),
+  assignmentAddAssigneeOptions: document.querySelector('#assignment-add-assignee-options'),
+  assignmentAddAssigneeKeyHelp: document.querySelector('#assignment-add-assignee-key-help'),
   assignmentAddScopeKind: document.querySelector('#assignment-add-scope-kind'),
+  assignmentAddScopeKeyLabel: document.querySelector('#assignment-add-scope-key-label'),
   assignmentAddScopeKey: document.querySelector('#assignment-add-scope-key'),
+  assignmentAddScopeKeyHelp: document.querySelector('#assignment-add-scope-key-help'),
   assignmentAddReason: document.querySelector('#assignment-add-reason'),
   assignmentAddError: document.querySelector('#assignment-add-error'),
   assignmentAddActions: document.querySelector('#assignment-add-actions'),
   teamEdit: document.querySelector('#team-edit'),
+  teamEditKeyLabel: document.querySelector('#team-edit-key-label'),
   teamEditKey: document.querySelector('#team-edit-key'),
+  teamEditKeyOptions: document.querySelector('#team-edit-key-options'),
+  teamEditKeyHelp: document.querySelector('#team-edit-key-help'),
+  teamEditGroupLabel: document.querySelector('#team-edit-group-label'),
   teamEditGroup: document.querySelector('#team-edit-group'),
+  teamEditGroupOptions: document.querySelector('#team-edit-group-options'),
+  teamEditGroupHelp: document.querySelector('#team-edit-group-help'),
   teamEditExisting: document.querySelector('#team-edit-existing'),
   teamEditReason: document.querySelector('#team-edit-reason'),
   teamEditError: document.querySelector('#team-edit-error'),
@@ -217,6 +237,12 @@ const elements = {
   auditExport: document.querySelector('#audit-export-grid'),
   auditUpdatedAt: document.querySelector('#audit-updated-at'),
   auditBody: document.querySelector('#audit-table-body'),
+  removalWorkflow: document.querySelector('#removal-workflow'),
+  removalTitle: document.querySelector('#removal-title'),
+  removalDetails: document.querySelector('#removal-details'),
+  removalReferences: document.querySelector('#removal-references'),
+  removalError: document.querySelector('#removal-error'),
+  removalActions: document.querySelector('#removal-actions'),
 };
 
 // One row per screen, so adding a screen is a row rather than another branch in every
@@ -357,6 +383,8 @@ const LOCAL_API = Object.freeze({
   assignmentsWritePath: '/api/local/assignments/propose',
   modelsWritePath: '/api/local/models/propose',
   policyImpactPreviewPath: '/api/local/policy-impact-preview',
+  removalPlanPath: '/api/local/removal-plan',
+  removalProposalsPath: '/api/local/removal-proposals',
 });
 
 // The route a deployment would serve for each screen. Which of these it actually
@@ -390,9 +418,17 @@ const DEPLOYED_WRITE_PATHS = Object.freeze({
   modelsWritePath: '/api/v1/admin/models',
   governancePublishPath: '/api/v1/admin/governance/publish',
   policyImpactPreviewPath: '/api/v1/admin/policy-impact-preview',
+  removalPlanPath: '/api/v1/admin/removal-plan',
+  removalProposalsPath: '/api/v1/admin/removal-proposals',
 });
 let session = createLocalSession();
 let api = LOCAL_API;
+const removalLoads = createLatestLoad();
+const accessOptionsLoads = createLatestLoad();
+let removalProposalPending = false;
+let removalReview = null;
+let identifierCopyGeneration = 0;
+let authoringOptionsFailure = null;
 
 function t(key, params) {
   return translate(locale, key, params);
@@ -556,6 +592,8 @@ function applyScreenChrome() {
 
 function setLocale(nextLocale) {
   previewLoads.invalidate();
+  resetIdentifierAssistance();
+  closeRemovalWorkflow();
   locale = resolveLocale(nextLocale);
   const url = new URL(location.href);
   url.searchParams.set('lang', locale);
@@ -1005,8 +1043,17 @@ function renderModelSelection(selection) {
  */
 function createBudgetConsumptionCell(consumption) {
   const cell = createElement('td');
+  const observationDetails = () => createBudgetObservationDetails(consumption, {
+    createElement,
+    t,
+    formatTime,
+    formatNumber,
+  });
   if (consumption.state === 'unmeasured') {
-    cell.append(createElement('p', 'empty-message', translateCode('consumptionReason', consumption.reasonCode)));
+    cell.append(
+      createElement('p', 'empty-message', translateCode('consumptionReason', consumption.reasonCode)),
+      observationDetails(),
+    );
     return cell;
   }
 
@@ -1041,6 +1088,7 @@ function createBudgetConsumptionCell(consumption) {
       createElement('p', 'policy-meta', t('budgets.windowsMissing', {
         value: formatNumber(consumption.windowsMissing),
       })),
+      observationDetails(),
     );
     return cell;
   }
@@ -1049,6 +1097,7 @@ function createBudgetConsumptionCell(consumption) {
     createElement('p', 'policy-meta', t('budgets.remainingTokens', {
       value: formatNumber(consumption.remainingTokens),
     })),
+    observationDetails(),
   );
   return cell;
 }
@@ -1185,9 +1234,10 @@ const BUDGET_REMOVAL_REASONS = Object.freeze([
  * showed it would be describing a cap the gateway is not enforcing.
  */
 function renderBudgetAuthoring(model) {
-  refreshAuthoringAuthority().then((allowed) => {
-    toggleBudgetRowEditButtons(allowed);
-    if (!allowed) {
+  refreshAuthoringAuthority().then((result) => {
+    if (!result.current) return;
+    toggleBudgetRowEditButtons(result.available);
+    if (!result.available) {
       elements.budgetAdd.hidden = true;
       return;
     }
@@ -1489,18 +1539,83 @@ let accessOptions = null;
 // not authority to change it, so the server decides and the panels follow.
 let authoringAvailable = false;
 
-async function refreshAuthoringAuthority() {
+function accessOptionsContextIsCurrent(load, context) {
+  return load?.isCurrent() === true
+    && currentScreen === context.screen
+    && locale === context.locale
+    && session.mode === context.mode
+    && (context.mode !== 'local' || elements.persona.value === context.persona);
+}
+
+async function refreshAuthoringAuthorityForContext(load, context) {
+  if (!accessOptionsContextIsCurrent(load, context)) {
+    return { current: false, available: false, reason: 'stale' };
+  }
   try {
-    const params = session.mode === 'local' ? `?persona=${elements.persona.value}` : '';
+    const params = context.mode === 'local' ? `?persona=${context.persona}` : '';
     const response = await fetch(`${api.baseUrl}${api.accessOptionsPath}${params}`, {
       headers: { Accept: 'application/json', ...(await session.getAuthorizationHeader()) },
+      signal: load.signal,
     });
-    authoringAvailable = response.ok;
-    if (response.ok) accessOptions = await response.json();
+    if (!accessOptionsContextIsCurrent(load, context)) {
+      return { current: false, available: false, reason: 'stale' };
+    }
+    let payload = null;
+    if (response.ok) {
+      payload = await response.json();
+      if (!accessOptionsContextIsCurrent(load, context)) {
+        return { current: false, available: false, reason: 'stale' };
+      }
+    }
+    const usable = response.ok
+      && payload !== null
+      && typeof payload === 'object'
+      && Array.isArray(payload.teams)
+      && Array.isArray(payload.models)
+      && Array.isArray(payload.bindings)
+      && Array.isArray(payload.assignmentGrantRules)
+      && Array.isArray(payload.grantReasonCodes)
+      && Array.isArray(payload.teamRemovalReasonCodes);
+    authoringAvailable = usable;
+    authoringOptionsFailure = usable
+      ? null
+      : response.ok
+        ? 'unavailable'
+        : response.status === 401 || response.status === 403 ? 'denied' : 'unavailable';
+    accessOptions = usable ? payload : null;
+    return {
+      current: true,
+      available: usable,
+      reason: authoringOptionsFailure,
+    };
   } catch {
+    if (!accessOptionsContextIsCurrent(load, context)) {
+      return { current: false, available: false, reason: 'stale' };
+    }
     authoringAvailable = false;
+    authoringOptionsFailure = 'unavailable';
+    accessOptions = null;
+    return { current: true, available: false, reason: 'unavailable' };
   }
-  return authoringAvailable;
+}
+
+// Budget/model/fallback renderers use the same contextual result; their callbacks
+// ignore stale completions instead of treating them as a permission denial.
+async function refreshAuthoringAuthority(load, context) {
+  if (load && context) return refreshAuthoringAuthorityForContext(load, context);
+  const legacyContext = {
+    screen: currentScreen,
+    locale,
+    mode: session.mode,
+    persona: elements.persona.value,
+  };
+  const legacyLoad = accessOptionsLoads.begin();
+  try {
+    // Keep the load current until its asynchronous authority check completes.
+    return await refreshAuthoringAuthorityForContext(legacyLoad, legacyContext);
+  } finally {
+    legacyLoad.finish();
+  }
 }
 
 function fillOptions(select, entries, selected = []) {
@@ -1519,6 +1634,105 @@ function describeBinding(binding) {
     kind: t(`accessEdit.target.${binding.targetKind}`),
     state: t(`entitlementState.${binding.state}`),
   });
+}
+
+function resetIdentifierAssistance() {
+  identifierCopyGeneration += 1;
+  accessOptionsLoads.invalidate();
+  accessOptions = null;
+  authoringAvailable = false;
+  authoringOptionsFailure = null;
+  if (elements.identifierHelp) elements.identifierHelp.hidden = true;
+  elements.identifierCaller?.replaceChildren();
+  elements.identifierOptions?.replaceChildren();
+  if (elements.identifierStatus) elements.identifierStatus.textContent = '';
+}
+
+function renderIdentifierEvidence(evidence) {
+  if (!elements.identifierHelp || !elements.identifierCaller || !elements.identifierOptions) return;
+  elements.identifierHelp.hidden = false;
+  elements.identifierCaller.replaceChildren();
+  elements.identifierOptions.replaceChildren();
+  const caller = evidence?.version === 'identifier-evidence.v1'
+    ? evidence.currentCaller
+    : null;
+  if (caller?.state === 'available') {
+    elements.identifierCaller.append(
+      createElement('strong', null, t('identifier.currentCallerAvailable')),
+      createElement('span', null, t('identifier.currentCallerScope', {
+        scope: caller.scope === 'control-plane-token'
+          ? t('identifier.controlPlaneToken')
+          : caller.scope === 'local-authoritative-fixture'
+            ? t('identifier.localAuthoritativeFixture')
+            : t('identifier.unknownScope'),
+      })),
+      createElement('code', null, `sk1: ${caller.subjectKey}`),
+      createElement('code', null, `ak1: ${caller.applicationKey}`),
+      createElement('p', 'policy-meta', t('identifier.currentCallerBoundary')),
+    );
+  } else {
+    elements.identifierCaller.append(
+      createElement('strong', null, t('identifier.currentCallerUnavailable')),
+      createElement('span', 'policy-meta', t('identifier.unavailable', {
+        reason: caller?.reasonCode ?? 'identifier-evidence-unavailable',
+      })),
+    );
+  }
+
+  const knownValues = evidence?.version === 'identifier-evidence.v1'
+    ? evidence.knownAuthorizedValues ?? []
+    : [];
+  if (knownValues.length === 0) {
+    elements.identifierOptions.append(createElement('p', 'empty-message', t('identifier.noKnownValues')));
+    return;
+  }
+  const generation = identifierCopyGeneration;
+  for (const entry of knownValues) {
+    const row = createElement('li', 'identifier-option');
+    row.append(
+      createElement('strong', null, translateCode('identifier.sourceKind', entry.sourceKind)),
+      createElement('span', 'policy-meta', translateCode('identifier.kind', entry.identifierKind)),
+      createElement('code', null, entry.value),
+    );
+    const copy = createElement('button', 'row-command', t('identifier.copy'));
+    copy.type = 'button';
+    copy.addEventListener('click', async () => {
+      if (generation !== identifierCopyGeneration) return;
+      if (elements.identifierStatus) elements.identifierStatus.textContent = t('identifier.copying');
+      try {
+        if (typeof navigator === 'undefined' || typeof navigator.clipboard?.writeText !== 'function') {
+          throw new Error('clipboard-unavailable');
+        }
+        await navigator.clipboard.writeText(entry.value);
+        if (generation !== identifierCopyGeneration) return;
+        if (elements.identifierStatus) elements.identifierStatus.textContent = t('identifier.copied');
+      } catch {
+        if (generation !== identifierCopyGeneration) return;
+        if (elements.identifierStatus) elements.identifierStatus.textContent = t('identifier.copyUnavailable');
+      }
+    });
+    row.append(copy);
+    elements.identifierOptions.append(row);
+  }
+}
+
+function renderIdentifierAssistanceFailure(reason) {
+  if (!elements.identifierHelp || !elements.identifierCaller || !elements.identifierOptions) return;
+  elements.identifierHelp.hidden = false;
+  elements.identifierCaller.replaceChildren(
+    createElement(
+      'strong',
+      null,
+      t(reason === 'denied' ? 'identifier.optionsDenied' : 'identifier.optionsUnavailable'),
+    ),
+  );
+  elements.identifierOptions.replaceChildren();
+  elements.identifierOptions.append(
+    createElement('p', 'empty-message', t(
+      reason === 'denied' ? 'identifier.optionsDeniedDetail' : 'identifier.optionsUnavailableDetail',
+    )),
+  );
+  if (elements.identifierStatus) elements.identifierStatus.textContent = '';
 }
 
 function fillBindingModels() {
@@ -1573,22 +1787,35 @@ function showGovernanceValidation(result, target, focus) {
 }
 
 async function loadAccessOptions() {
-  if (currentScreen !== 'users-groups') {
-    elements.accessEdit.hidden = true;
-    elements.subjectAdd.hidden = true;
-    elements.assignmentAdd.hidden = true;
-    elements.teamEdit.hidden = true;
-    return;
-  }
-  if (!(await refreshAuthoringAuthority())) {
-    // A reader who may not change access is not shown a panel that would refuse.
-    elements.accessEdit.hidden = true;
-    elements.subjectAdd.hidden = true;
-    elements.assignmentAdd.hidden = true;
-    elements.teamEdit.hidden = true;
-    return;
-  }
-  if (currentScreen !== 'users-groups') return;
+  resetIdentifierAssistance();
+  const load = accessOptionsLoads.begin();
+  const context = {
+    screen: currentScreen,
+    locale,
+    mode: session.mode,
+    persona: elements.persona.value,
+  };
+  try {
+    if (currentScreen !== 'users-groups') {
+      elements.accessEdit.hidden = true;
+      elements.subjectAdd.hidden = true;
+      elements.assignmentAdd.hidden = true;
+      elements.teamEdit.hidden = true;
+      return;
+    }
+    const result = await refreshAuthoringAuthority(load, context);
+    if (!result.current || !accessOptionsContextIsCurrent(load, context)) return;
+    if (!result.available) {
+      // Keep the edit panels hidden, but say whether the options were refused or
+      // unavailable instead of silently removing the identifier help.
+      elements.accessEdit.hidden = true;
+      elements.subjectAdd.hidden = true;
+      elements.assignmentAdd.hidden = true;
+      elements.teamEdit.hidden = true;
+      renderIdentifierAssistanceFailure(result.reason);
+      return;
+    }
+    renderIdentifierEvidence(accessOptions?.identifierEvidence);
 
   elements.accessEditError.textContent = '';
   fillOptions(
@@ -1690,12 +1917,34 @@ async function loadAccessOptions() {
   fillSubjectAuthoring();
   fillAssignmentAuthoring();
   fillTeamAuthoring();
+  } finally {
+    load.finish();
+  }
 }
 
 async function showUsersGroupsAuthoringAlongsideState() {
   elements.usersGroupsContent.hidden = false;
   for (const panel of elements.directoryReadingPanels) panel.hidden = true;
   await loadAccessOptions();
+}
+
+function identifierValues(...identifierKinds) {
+  const values = new Set();
+  for (const entry of accessOptions?.identifierEvidence?.knownAuthorizedValues ?? []) {
+    if (identifierKinds.includes(entry.identifierKind) && typeof entry.value === 'string') {
+      values.add(entry.value);
+    }
+  }
+  return [...values];
+}
+
+function fillIdentifierDatalist(list, values) {
+  if (!list) return;
+  list.replaceChildren(...values.map((value) => {
+    const option = document.createElement('option');
+    option.value = value;
+    return option;
+  }));
 }
 
 /** Bringing a person, application, or existing team under governance. */
@@ -1726,11 +1975,27 @@ function fillSubjectAuthoring() {
   });
 
   const updateTargetInput = () => {
-    const team = elements.subjectAddKind.value === 'team';
+    const targetKind = elements.subjectAddKind.value;
+    const team = targetKind === 'team';
     elements.subjectAddKey.hidden = team;
     elements.subjectAddKey.previousElementSibling.hidden = team;
     elements.subjectAddTeam.hidden = !team;
     elements.subjectAddTeam.previousElementSibling.hidden = !team;
+    if (elements.subjectAddKeyLabel) {
+      elements.subjectAddKeyLabel.textContent = t(`subjectAdd.keyLabel.${targetKind}`);
+    }
+    if (elements.subjectAddKeyHelp) {
+      elements.subjectAddKeyHelp.textContent = t(`subjectAdd.keyHelp.${targetKind}`);
+      elements.subjectAddKeyHelp.hidden = team;
+    }
+    fillIdentifierDatalist(
+      elements.subjectAddKeyOptions,
+      targetKind === 'subject'
+        ? identifierValues('gateway-subject')
+        : targetKind === 'application'
+          ? identifierValues('application-client-id')
+          : [],
+    );
   };
   elements.subjectAddKind.onchange = updateTargetInput;
   updateTargetInput();
@@ -1780,6 +2045,13 @@ function fillAssignmentAuthoring() {
     const teamScoped = elements.assignmentAddScopeKind.value === 'team';
     elements.assignmentAddScopeKey.hidden = !teamScoped;
     elements.assignmentAddScopeKey.previousElementSibling.hidden = !teamScoped;
+    if (elements.assignmentAddScopeKeyLabel) {
+      elements.assignmentAddScopeKeyLabel.textContent = t('assignmentAdd.scopeKeyLabel');
+    }
+    if (elements.assignmentAddScopeKeyHelp) {
+      elements.assignmentAddScopeKeyHelp.textContent = t('assignmentAdd.scopeKeyHelp');
+      elements.assignmentAddScopeKeyHelp.hidden = !teamScoped;
+    }
   };
   const updateRule = () => {
     const rule = accessOptions.assignmentGrantRules.find(
@@ -1793,9 +2065,31 @@ function fillAssignmentAuthoring() {
       elements.assignmentAddScopeKind,
       rule.scopeKinds.map((kind) => [kind, t(`assignmentAdd.scope.${kind}`)]),
     );
+    const assigneeKind = elements.assignmentAddAssigneeKind.value;
+    if (elements.assignmentAddAssigneeKeyLabel) {
+      elements.assignmentAddAssigneeKeyLabel.textContent = t(
+        `assignmentAdd.assigneeKeyLabel.${assigneeKind}`,
+      );
+    }
+    if (elements.assignmentAddAssigneeKeyHelp) {
+      elements.assignmentAddAssigneeKeyHelp.textContent = t(
+        `assignmentAdd.assigneeKeyHelp.${assigneeKind}`,
+      );
+    }
+    fillIdentifierDatalist(
+      elements.assignmentAddAssigneeOptions,
+      assigneeKind === 'subject'
+        ? identifierValues('gateway-subject')
+        : assigneeKind === 'application'
+          ? identifierValues('application-client-id')
+          : assigneeKind === 'group'
+            ? identifierValues('entra-group-id')
+            : [],
+    );
     updateScopeVisibility();
   };
   elements.assignmentAddRole.onchange = updateRule;
+  elements.assignmentAddAssigneeKind.onchange = updateRule;
   elements.assignmentAddScopeKind.onchange = updateScopeVisibility;
   updateRule();
 
@@ -1830,6 +2124,8 @@ function fillAssignmentAuthoring() {
  */
 function fillTeamAuthoring() {
   elements.teamEditError.textContent = '';
+  elements.teamEditExisting.onchange = closeRemovalWorkflow;
+  elements.teamEditReason.onchange = closeRemovalWorkflow;
   fillOptions(
     elements.teamEditExisting,
     accessOptions.teams.map((team) => [
@@ -1837,6 +2133,10 @@ function fillTeamAuthoring() {
       t('teamEdit.existingOption', { team: team.teamCode, count: team.bindingCodes.length }),
     ]),
   );
+  fillIdentifierDatalist(elements.teamEditKeyOptions, identifierValues('canonical-team-key'));
+  fillIdentifierDatalist(elements.teamEditGroupOptions, identifierValues('entra-group-id'));
+  if (elements.teamEditKeyHelp) elements.teamEditKeyHelp.textContent = t('teamEdit.keyHelp');
+  if (elements.teamEditGroupHelp) elements.teamEditGroupHelp.textContent = t('teamEdit.groupHelp');
   fillOptions(
     elements.teamEditReason,
     accessOptions.teamRemovalReasonCodes.map((code) => [
@@ -1862,15 +2162,11 @@ function fillTeamAuthoring() {
     }, elements.teamEditError);
   });
 
-  const remove = createElement('button', 'row-command', authoringText('teamEdit.proposeRemove'));
+  const remove = createElement('button', 'row-command', authoringText('teamEdit.reviewRemove'));
   remove.type = 'button';
   remove.dataset.tone = 'danger';
   remove.addEventListener('click', () => {
-    proposeAccessChange('teamsWritePath', {
-      command: 'remove',
-      teamKey: elements.teamEditExisting.value,
-      reasonCode: elements.teamEditReason.value,
-    }, elements.teamEditError);
+    openRemovalWorkflow('team', elements.teamEditExisting.value, elements.teamEditReason.value);
   });
 
   elements.teamEditActions.replaceChildren(add, remove);
@@ -1907,6 +2203,180 @@ async function proposeAccessChange(pathKey, body, target = elements.accessEditEr
       : t('accessEdit.proposed', { revision: result.revisionId });
   } catch {
     target.textContent = t('accessEdit.unavailable');
+  }
+}
+
+function removalErrorMessage(code) {
+  if ([
+    'forbidden',
+    'removal_denied',
+    'governance_access_denied',
+    'caller_not_authenticated',
+    'not-a-governance-author',
+    'scope-denied',
+    'membership-not-authoritative',
+  ].includes(code)) return t('removal.forbidden');
+  if (code === 'stale' || code === 'removal_plan_stale' || code === 'removal-plan-stale') {
+    return t('removal.stale');
+  }
+  return t('removal.unavailable');
+}
+
+function removalPublishingButton() {
+  const publishing = createElement('button', 'row-command', t('removal.openPublishing'));
+  publishing.type = 'button';
+  publishing.addEventListener('click', () => { location.hash = SCREENS.lifecycle.hash; });
+  return publishing;
+}
+
+function closeRemovalWorkflow() {
+  removalLoads.invalidate();
+  removalReview = null;
+  elements.removalWorkflow.hidden = !removalProposalPending;
+  elements.removalReferences.replaceChildren();
+  elements.removalActions.replaceChildren();
+  elements.removalError.textContent = '';
+  if (removalProposalPending) {
+    elements.removalTitle.textContent = t('removal.pendingTitle');
+    elements.removalDetails.textContent = '';
+    elements.removalError.textContent = t('removal.pending');
+    elements.removalActions.append(removalPublishingButton());
+  }
+}
+
+function renderRemovalPlan(plan, request) {
+  const review = { plan, request };
+  removalReview = review;
+  elements.removalWorkflow.hidden = false;
+  elements.removalTitle.textContent = t('removal.title', {
+    target: `${t(`removal.kind.${request.target.kind}`)}: ${request.target.key}`,
+  });
+  elements.removalDetails.textContent = plan.blockers.length > 0
+    ? t('removal.blocked', { count: plan.blockers.length })
+    : t('removal.review', { count: plan.references.length });
+  const checks = plan.references.map((reference) => {
+    const label = document.createElement('label');
+    label.className = 'removal-reference';
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.value = reference.referenceId;
+    checkbox.dataset.removalReference = 'true';
+    label.append(checkbox, createElement('span', null, t('removal.reference', {
+      kind: t(`removal.kind.${reference.kind}`),
+      code: reference.code,
+      state: t(`removal.state.${reference.state}`),
+      action: t(`removal.action.${reference.action}`),
+    })));
+    return label;
+  });
+  const blockers = plan.blockers.map((blocker) => createElement('p', 'policy-meta',
+    t('removal.blocker', { reason: translateCode('removal.reason', blocker.reasonCode) })));
+  elements.removalReferences.replaceChildren(...blockers, ...checks);
+  const checkboxes = [...elements.removalReferences.querySelectorAll('[data-removal-reference]')];
+  const propose = createElement('button', 'row-command', t('removal.propose'));
+  propose.type = 'button';
+  propose.dataset.tone = 'danger';
+  const update = () => {
+    const selected = checkboxes.filter((input) => input.checked);
+    propose.disabled = removalProposalPending || removalReview !== review
+      || !plan.canPropose || plan.blockers.length > 0 || selected.length !== plan.references.length;
+  };
+  propose.addEventListener('click', async () => {
+    if (removalProposalPending || removalReview !== review) {
+      elements.removalError.textContent = t(removalProposalPending ? 'removal.pending' : 'removal.stale');
+      return;
+    }
+    const team = request.target.kind === 'team';
+    if ((team ? elements.teamEditExisting.value : elements.modelAddTarget.value) !== request.target.key
+      || (team ? elements.teamEditReason.value : elements.modelAddReason.value) !== request.reasonCode) {
+      closeRemovalWorkflow();
+      elements.removalWorkflow.hidden = false;
+      elements.removalError.textContent = t('removal.stale');
+      return;
+    }
+    let payload;
+    try {
+      payload = buildRemovalProposalPayload(plan, request, checkboxes.filter((input) => input.checked).map((input) => input.value));
+    } catch {
+      elements.removalError.textContent = t('removal.invalid');
+      return;
+    }
+    removalProposalPending = true;
+    update();
+    for (const checkbox of checkboxes) checkbox.disabled = true;
+    elements.removalError.textContent = t('removal.submitting');
+    try {
+      const params = session.mode === 'local' ? `?persona=${elements.persona.value}` : '';
+      // A navigation can discard the view, not cancel a draft already accepted by the server.
+      const response = await fetch(`${api.baseUrl}${api.removalProposalsPath}${params}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...(await session.getAuthorizationHeader()) },
+        body: JSON.stringify(payload),
+      });
+      const result = await response.json();
+      if (removalReview !== review) return;
+      if (!response.ok) {
+        elements.removalError.textContent = removalErrorMessage(result.error?.code ?? result.reasonCode);
+        return;
+      }
+      if (response.status !== 201 || result.outcome !== 'proposed' || typeof result.revisionId !== 'string'
+        || !Number.isSafeInteger(result.revisionNumber) || result.state !== 'draft') {
+        throw new Error('Invalid removal proposal response.');
+      }
+      elements.removalError.textContent = t('removal.proposed', { revision: result.revisionId });
+    } catch {
+      if (removalReview === review) elements.removalError.textContent = t('removal.pending');
+    } finally {
+      removalProposalPending = false;
+      if (removalReview === review) {
+        removalReview = null;
+        elements.removalActions.replaceChildren(removalPublishingButton());
+      }
+      update();
+    }
+  });
+  const cancel = createElement('button', 'row-command', t('removal.cancel'));
+  cancel.type = 'button';
+  cancel.addEventListener('click', closeRemovalWorkflow);
+  for (const checkbox of checkboxes) checkbox.addEventListener('change', update);
+  update();
+  elements.removalActions.replaceChildren(propose, cancel);
+  elements.removalWorkflow.scrollIntoView({ block: 'nearest' });
+}
+
+async function openRemovalWorkflow(kind, key, reasonCode) {
+  closeRemovalWorkflow();
+  if (removalProposalPending) return;
+  let request;
+  try {
+    request = buildRemovalPlanPayload({ kind, key, reasonCode });
+  } catch {
+    elements.removalWorkflow.hidden = false;
+    elements.removalError.textContent = t('removal.invalid');
+    return;
+  }
+  const load = removalLoads.begin();
+  elements.removalWorkflow.hidden = false;
+  elements.removalTitle.textContent = t('removal.loading');
+  elements.removalDetails.textContent = '';
+  try {
+    const params = session.mode === 'local' ? `?persona=${elements.persona.value}` : '';
+    const response = await fetch(`${api.baseUrl}${api.removalPlanPath}${params}`, {
+      method: 'POST', signal: load.signal,
+      headers: { 'content-type': 'application/json', ...(await session.getAuthorizationHeader()) },
+      body: JSON.stringify(request),
+    });
+    const result = await response.json();
+    if (!load.isCurrent()) return;
+    if (!response.ok) {
+      elements.removalError.textContent = removalErrorMessage(result.error?.code ?? result.reasonCode);
+      return;
+    }
+    renderRemovalPlan(validateRemovalPlan(result, request), request);
+  } catch (error) {
+    if (load.isCurrent() && error.name !== 'AbortError') elements.removalError.textContent = t('removal.unavailable');
+  } finally {
+    load.finish();
   }
 }
 
@@ -2244,6 +2714,9 @@ function renderModelRecords(model) {
 
     const identity = createElement('td');
     identity.append(createElement('strong', null, record.modelKey));
+    identity.append(createElement('p', 'policy-meta', t('models.deploymentName', {
+      value: record.providerDeploymentName ?? t('state.unknown'),
+    })));
     const state = createElement(
       'span',
       'status-label',
@@ -2300,8 +2773,9 @@ function renderModelAuthoring(model) {
     elements.modelAdd.hidden = true;
     return;
   }
-  refreshAuthoringAuthority().then((allowed) => {
-    if (!allowed) {
+  refreshAuthoringAuthority().then((result) => {
+    if (!result.current) return;
+    if (!result.available) {
       elements.modelAdd.hidden = true;
       return;
     }
@@ -2311,6 +2785,8 @@ function renderModelAuthoring(model) {
 
 function fillModelAuthoring(model) {
   elements.modelAddError.textContent = '';
+  elements.modelAddTarget.onchange = closeRemovalWorkflow;
+  elements.modelAddReason.onchange = closeRemovalWorkflow;
   const governed = model.records.filter((record) => record.registrationState === 'registered');
   fillOptions(
     elements.modelAddDeployment,
@@ -2340,16 +2816,12 @@ function fillModelAuthoring(model) {
     }, elements.modelAddError);
   });
 
-  const remove = createElement('button', 'row-command', t('modelAdd.remove'));
+  const remove = createElement('button', 'row-command', t('modelAdd.reviewRemove'));
   remove.type = 'button';
   remove.dataset.tone = 'danger';
   remove.disabled = governed.length === 0;
   remove.addEventListener('click', () => {
-    proposeAccessChange('modelsWritePath', {
-      command: 'remove',
-      modelKey: elements.modelAddTarget.value,
-      reasonCode: elements.modelAddReason.value,
-    }, elements.modelAddError);
+    openRemovalWorkflow('model', elements.modelAddTarget.value, elements.modelAddReason.value);
   });
 
   const recapture = createElement('button', 'row-command', t('modelAdd.recapture'));
@@ -2684,8 +3156,9 @@ function renderFallbackAuthoring(model) {
     elements.fallbackEdit.hidden = true;
     return;
   }
-  refreshAuthoringAuthority().then((allowed) => {
-    if (!allowed) {
+  refreshAuthoringAuthority().then((result) => {
+    if (!result.current) return;
+    if (!result.available) {
       elements.fallbackEdit.hidden = true;
       return;
     }
@@ -3974,6 +4447,8 @@ function translateErrorCode(code) {
 
 async function loadCurrentScreen() {
   previewLoads.invalidate();
+  resetIdentifierAssistance();
+  closeRemovalWorkflow();
   const generation = ++loadGeneration;
   activeLoadController?.abort();
   const controller = new AbortController();

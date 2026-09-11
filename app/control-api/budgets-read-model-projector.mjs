@@ -51,6 +51,16 @@ function projectConsumption(entry, observations) {
       exceededByTokens: null,
       windowsCovered: null,
       windowsMissing: null,
+      observation: {
+        requestedBudgetVersion: entry.budgetVersion,
+        requestedWindow: null,
+        latestClosedWindow: null,
+        coveredWindows: null,
+        missingWindows: null,
+        coverageDetailState: 'not-collected',
+        policyVersionEvidence: { state: 'not-collected', value: null, reasonCode: 'usage-rollup-policy-version-not-collected' },
+        counterIdentityEvidence: { state: 'not-collected' },
+      },
     });
 
   if (entry.enforcedTokenQuota === null) return unmeasured('no-quota-to-measure');
@@ -76,6 +86,18 @@ function projectConsumption(entry, observations) {
     exceededByTokens: overCap ? observation.consumedTokens - entry.enforcedTokenQuota : null,
     windowsCovered: observation.windowsCovered ?? null,
     windowsMissing: observation.windowsMissing ?? null,
+    observation: {
+      requestedBudgetVersion: entry.budgetVersion,
+      requestedWindow: observation.requestedWindow ?? null,
+      latestClosedWindow: observation.latestClosedWindow ?? null,
+      coveredWindows: observation.coveredWindows ?? null,
+      missingWindows: observation.missingWindows ?? null,
+      coverageDetailState: observation.coverageDetailState ?? 'not-collected',
+      policyVersionEvidence: { state: 'not-collected', value: null, reasonCode: 'usage-rollup-policy-version-not-collected' },
+      // Rollups do not identify a deployed APIM counter. Do not manufacture one from
+      // a budget version or represent this aggregate as an enforcement readback.
+      counterIdentityEvidence: { state: 'not-collected' },
+    },
   });
 }
 

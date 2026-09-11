@@ -153,6 +153,26 @@ test('a model row carries its wire contracts, maturity and safety policy', () =>
   const primary = readModel.records.find((row) => row.modelKey === 'coding-primary');
   assert.equal(primary.registrationState, 'registered');
   assert.equal(primary.lifecycle, 'generally-available');
+  assert.equal(primary.providerDeploymentName, 'deploy-coding-primary');
+});
+
+test('deployment names come from the registered mapping even without provider quota data', () => {
+  for (const providerQuota of [null, { ...quotaSnapshot(), status: 'unavailable' }]) {
+    const readModel = project({ providerQuota });
+    assert.deepEqual(
+      readModel.records.map(({ modelKey, providerDeploymentName }) => [modelKey, providerDeploymentName]),
+      [['coding-fast', 'deploy-coding-fast'], ['coding-primary', 'deploy-coding-primary']],
+    );
+  }
+});
+
+test('missing deployment mappings stay unknown rather than being inferred from logical aliases', () => {
+  const legacy = project({
+    registry: registry({ models: [model('coding-primary', { providerDeploymentName: undefined })] }),
+  });
+  assert.equal(legacy.records.find((row) => row.modelKey === 'coding-primary').providerDeploymentName, null);
+  const unregistered = project({ records: [record({ correlationId: 'unregistered', modelKey: 'unregistered-model' })] });
+  assert.equal(unregistered.records.find((row) => row.modelKey === 'unregistered-model').providerDeploymentName, null);
 });
 
 test('a provider quota reading is joined onto the model that declares its deployment', () => {

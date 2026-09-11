@@ -47,6 +47,8 @@ Assert-EntraIac ($identityTemplate.Contains('isFallbackPublicClient: true')) 'Th
 Assert-EntraIac ($identityTemplate.Contains('preAuthorizedApplications: [')) 'The resource API must preauthorize the first-party public client.'
 Assert-EntraIac ($identityTemplate.Contains('appId: gatewayCliApplication.appId')) 'Preauthorization must target the generated public client app ID.'
 Assert-EntraIac (([regex]::Matches($identityTemplate, "groupMembershipClaims: 'ApplicationGroup'")).Count -eq 1) 'Only the gateway API must request groups assigned to the application.'
+Assert-EntraIac (([regex]::Matches($identityTemplate, "groupMembershipClaims: 'SecurityGroup'")).Count -eq 1) 'Only the administration API must request security-group evidence for impact preview.'
+Assert-EntraIac ($identityTemplate -match "resource adminApiApplication[\s\S]*?groupMembershipClaims: 'SecurityGroup'[\s\S]*?identifierUris:\s*\[\s*adminApiIdentifierUri") 'Preview group claims must belong to the administration resource API.'
 Assert-EntraIac ($identityTemplate.Contains("resource governedTeamGroupGrants 'Microsoft.Graph/appRoleAssignedTo@v1.0' = [for groupId in governedMembershipGroupIds:")) 'Each governed group must be assigned to the gateway API.'
 Assert-EntraIac ($identityTemplate -match "governedTeamGroupGrants[\s\S]*?appRoleId:\s*'00000000-0000-0000-0000-000000000000'") 'Governed groups must use the gateway API default-access assignment.'
 Assert-EntraIac ($identityTemplate -match 'governedTeamGroupGrants[\s\S]*?resourceId:\s*gatewayApiServicePrincipal\.id') 'Governed groups must be assigned to the gateway API service principal, not the administration API.'
@@ -72,7 +74,7 @@ Assert-EntraIac ($identityTemplate.Contains("var administerRoleId = guid(") -and
 Assert-EntraIac ($identityTemplate.Contains("type: 'Admin'")) 'The administration scope must require administrator consent.'
 Assert-EntraIac ($identityTemplate.Contains('appId: adminSpaApplication.appId')) 'The administration API must preauthorize only its own console client.'
 Assert-EntraIac ($identityTemplate -match "spa:\s*\{[\s\S]*?redirectUris:") 'The administration console must be registered as a single-page client.'
-Assert-EntraIac ($identityTemplate.Contains("param adminConsoleDevelopmentOrigin string = 'http://localhost:4173'")) 'The administration SPA must register the initializer loopback redirect.'
+Assert-EntraIac ($identityTemplate.Contains("param adminConsoleDevelopmentOrigin string = 'http://localhost:4173'")) 'The administration SPA must retain the local console origin.'
 
 # The assertions above (and the CLI's own isFallbackPublicClient/publicClient checks
 # further up this file) are satisfied by ANY app registration in this template, so
@@ -82,9 +84,9 @@ $adminSpaResourceMatch = [regex]::Match($identityTemplate, "resource adminSpaApp
 Assert-EntraIac $adminSpaResourceMatch.Success 'The adminSpaApplication resource must be present to scope assertions to it.'
 $adminSpaBody = $adminSpaResourceMatch.Groups[1].Value
 Assert-EntraIac ($adminSpaBody.Contains('isFallbackPublicClient: true')) 'The administration console client must allow public client flows so the bootstrap initializer can sign in by device code.'
-Assert-EntraIac ($adminSpaBody -match "publicClient:\s*\{[\s\S]*?redirectUris:\s*\[\s*'http://localhost'\s*\]") 'The administration console client must register the loopback public-client redirect.'
+Assert-EntraIac ($adminSpaBody -match "publicClient:\s*\{[\s\S]*?redirectUris:\s*\[\s*'http://localhost/governance-bootstrap'\s*\]") 'The initializer native redirect must use a distinct path from the local SPA; Entra ignores localhost ports.'
 Assert-EntraIac ($adminSpaBody -match "spa:\s*\{[\s\S]*?redirectUris:\s*union\(") 'The administration console client must keep its SPA redirect for the browser sign-in path.'
-Assert-EntraIac ($initializer.Contains("const REDIRECT_URI = 'http://localhost:4173';")) 'The initializer redirect must match the administration SPA registration.'
+Assert-EntraIac ($initializer.Contains("const REDIRECT_URI = 'http://localhost:4173/governance-bootstrap';")) 'The initializer redirect must match its native public-client registration.'
 Assert-EntraIac ($identityTemplate.Contains('output adminApiAudience string')) 'The administration audience must be published for the API to validate.'
 
 # --- Bootstrap administrator -------------------------------------------------

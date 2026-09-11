@@ -19,10 +19,10 @@ hooks:
   postprovision:
     posix:
       shell: sh
-      run: node tools/distribution/Repair-EasyAuthClientAllowlist.mjs
+      run: node tools/distribution/Repair-EasyAuthClientAllowlist.mjs && node tools/deployment/ownership-contract.mjs generate-if-configured
     windows:
       shell: pwsh
-      run: node tools/distribution/Repair-EasyAuthClientAllowlist.mjs
+      run: node tools/distribution/Repair-EasyAuthClientAllowlist.mjs; if ($LASTEXITCODE -eq 0) { node tools/deployment/ownership-contract.mjs generate-if-configured }
   # The console's identity configuration is written from provisioning outputs, so the
   # build runs after infrastructure exists and before anything is packaged.
   prepackage:

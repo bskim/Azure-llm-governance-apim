@@ -192,6 +192,20 @@ if (accessAuthoring !== null) {
     handler: accessAuthoring.changeTeam,
   });
 
+  app.http('removalPlan', {
+    route: 'v1/admin/removal-plan',
+    methods: ['POST'],
+    authLevel: 'anonymous',
+    handler: accessAuthoring.removalPlan,
+  });
+
+  app.http('removalProposal', {
+    route: 'v1/admin/removal-proposals',
+    methods: ['POST'],
+    authLevel: 'anonymous',
+    handler: accessAuthoring.removalProposal,
+  });
+
   if (accessAuthoring.changeModel !== null) {
     app.http('changeModel', {
       route: 'v1/admin/models',

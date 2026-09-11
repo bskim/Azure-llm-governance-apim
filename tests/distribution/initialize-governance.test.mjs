@@ -210,26 +210,54 @@ test('PKCE URL fixes the registered redirect and forces account selection', () =
     state: 'state',
     challenge: 'challenge',
   }));
-  assert.equal(url.searchParams.get('redirect_uri'), 'http://localhost:4173');
+  assert.equal(url.searchParams.get('redirect_uri'), 'http://localhost:4173/governance-bootstrap');
   assert.equal(url.searchParams.get('code_challenge_method'), 'S256');
   assert.equal(url.searchParams.get('prompt'), 'select_account');
   assert.match(url.searchParams.get('scope'), /Governance\.Access$/);
   assert.doesNotMatch(url.searchParams.get('scope'), /offline_access/);
 });
 
-test('PKCE token redemption distinguishes SPA and native public clients', async () => {
+test('PKCE uses its native callback path and redeems without a browser Origin', async () => {
   const calls = [];
+  let closed = false;
+  let handleRequest;
+  const statuses = [];
   const transport = async (_url, options) => {
-    calls.push(options.headers);
+    calls.push(options);
     return { ok: true, json: async () => ({ access_token: validToken }) };
   };
-  // The callback itself is exercised elsewhere; this source contract pins the token
-  // request mode without introducing a second listener into this test process.
-  const source = await readFile(new URL('../../tools/distribution/Initialize-Governance.mjs', import.meta.url), 'utf8');
-  assert.match(source, /tokenRequestOrigin = REDIRECT_URI/);
-  assert.match(source, /tokenRequestOrigin === null \? \{\} : \{ Origin: tokenRequestOrigin \}/);
-  assert.equal(calls.length, 0);
-  assert.equal(typeof createPkceAuthorizer({ transport, tokenRequestOrigin: null }), 'function');
+  const authorize = createPkceAuthorizer({
+    transport,
+    createServerImpl: (handler) => {
+      handleRequest = handler;
+      return {
+        on() {},
+        listen(_port, _host, ready) { ready(); },
+        close() { closed = true; },
+      };
+    },
+    writeLine: (line) => {
+      if (!line.startsWith('https://')) return;
+      const url = new URL(line);
+      const response = {
+        writeHead(status) { statuses.push(status); return this; },
+        end() { return this; },
+      };
+      handleRequest({ method: 'GET', url: '/' }, response);
+      const callback = new URL(url.searchParams.get('redirect_uri'));
+      callback.searchParams.set('state', url.searchParams.get('state'));
+      callback.searchParams.set('code', 'test-authorization-code');
+      handleRequest({ method: 'GET', url: `${callback.pathname}${callback.search}` }, response);
+    },
+  });
+  assert.equal(await authorize(targets), validToken);
+  assert.equal(closed, true);
+  assert.deepEqual(statuses, [404, 200]);
+  assert.equal(calls.length, 1);
+  assert.equal(new Headers(calls[0].headers).has('origin'), false);
+  assert.equal(calls[0].body.get('redirect_uri'), 'http://localhost:4173/governance-bootstrap');
+  assert.equal(calls[0].body.get('code'), 'test-authorization-code');
+  assert.equal(calls[0].body.get('grant_type'), 'authorization_code');
 });
 
 test('an insecure control-plane endpoint refuses before sign-in or publication', async () => {

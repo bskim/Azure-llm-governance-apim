@@ -44,6 +44,8 @@ The console exposes `{ "command": "abandon", "revisionId": "revision-0002" }` on
 
 ### Preview A Saved Draft
 
+The deployed administration API requests `SecurityGroup` token claims for the caller's own memberships. This does not grant Microsoft Graph directory-reading permission. Groups assigned only to the gateway would be missing from an administration API `ApplicationGroup` claim, so that narrower claim is not used for this preview. Sign in again after upgrading the identity configuration. An absent group claim, including token group overage, reports `caller-policy-evidence-unavailable`; it is never treated as an empty group list. See [installation troubleshooting](01-deployment.md#impact-preview-reports-missing-caller-evidence).
+
 For a draft with stored content, choose **Preview impact** on the Publishing screen. Select the API family to compare the active policy with the saved proposal. The comparison includes allowed models, provider deployment mappings, request and token limits, budget thresholds, and fallback paths or rejection reasons. It uses the same policy resolver for both sides at one evaluation time.
 
 The supported target is **the current authenticated caller only**, including the application identity in that caller's validated request. The preview does not impersonate a different coding client, select arbitrary users, or substitute an administrator's membership for another caller. In local mode it explicitly identifies deterministic persona evidence; that is not proof of deployed authorization. If the current caller's identity or membership cannot be established, the comparison reports unavailable rather than inventing a policy.
@@ -63,6 +65,14 @@ A budget is authored here and applies from the moment it is published. The scree
 Budgets are best effort. A cap can be passed before enforcement catches up, and the screen reports how far. If you need a hard guarantee that no request exceeds a number, this product does not provide one; see the limitations in [Deploying The Gateway](01-deployment.md#operating-limitations).
 
 Budgets do not merge into a single number, and every applicable counter can stop a request. Publication and enforcement preserve the authored budget identity, version, scope, model, period, action, threshold, and accounting basis. Unsupported or ambiguous combinations are rejected before publication rather than silently sharing a counter. The policy checks in [Operating And Removing An Evaluation Environment](03-operations.md) describe the combination rules.
+
+### Understanding observed consumption
+
+Consumption is an aggregate of usage records, not a readback of the live APIM counter. Inspect the requested aggregation interval, the latest complete observed window, and the covered and missing windows alongside the total. A gap can make measured consumption lower than actual consumption. For an incomplete observation, remaining tokens stay unavailable (`null`), not an estimated allowance; missing observations and budgets without a token quota are reported as unmeasured.
+
+The requested budget version identifies the configuration used to select the observation and calculate its quota. It does not prove which policy version governed every recorded request. The current rollup contract does not collect policy-version or APIM-counter identity evidence, so these remain **not collected**. The console does not infer those values from the current configuration or backfill old records when a version changes.
+
+Changing a budget version can change APIM counter identity without erasing usage history. Do not compare a fresh counter with the aggregate as if they were the same measurement, or interpret either as Azure Billing cost. Refresh after publication and review the observation interval and completeness before interpreting the new budget's remaining allowance.
 
 ### Budget actions
 
@@ -101,9 +111,11 @@ When that model's quota is exhausted, APIM refuses the request before forwarding
 
 The catalogue shows what each model can do, what this deployment allows it to do, what it served, and the meters Azure publishes for it.
 
-You bring a model under governance by selecting one of the deployment's own model deployments; the console reads the choices from the deployment rather than asking you to type a name. Removing a model asks for a reason, and a model still allowed by an entitlement cannot be removed, so the catalogue cannot quietly stop covering something a caller is still entitled to.
+Each row shows the logical model alias first and the registered provider deployment name directly underneath it. The deployment name remains visible even when provider quota cannot be read; if the registry has no mapping, it is shown as unknown rather than guessed from the alias.
 
-Retiring an entitlement does not delete its model references. Removing a model still referenced by a revoked binding requires an approved whole-set replacement that removes the references consistently. The targeted console editor does not delete bindings. Provider capture and price controls appear only when the generated deployment configuration declares those routes available; supported deployment modes supply that configuration.
+You bring a model under governance by selecting one of the deployment's own model deployments; the console reads the choices from the deployment rather than asking you to type a name. Removing a model asks for a reason and a review of its references. A model still allowed by an entitlement cannot be removed on its own; related changes must be explicitly acknowledged and proposed together, so the catalogue cannot quietly stop covering something a caller is still entitled to.
+
+Retiring an entitlement does not delete its model references. Removing a model still referenced by a revoked binding requires an approved whole-set replacement that removes the references consistently. The [reference-aware removal workflow](#reviewing-team-and-model-removal) prepares that replacement as one draft without editing historical revisions. Provider capture and price controls appear only when the generated deployment configuration declares those routes available; supported deployment modes supply that configuration.
 
 The catalogue is a captured reading with a version and an expiry. Refresh it from the provider before it expires, or the screen will tell you it is reporting a stale one.
 
@@ -153,12 +165,29 @@ The directory projection at the top is a reading, and it is read-only: it asks o
 
 The directory reading needs a Microsoft Graph permission that a deployment does not grant itself. Until an administrator grants it, the reading refuses with `reading_unavailable / directory-snapshot-absent`. Authorized entitlement and assignment authoring remains available independently, using entered keys and published team mappings rather than a directory picker. See [Entra: Directory Reading For Users And Groups](01-deployment.md#entra-directory-reading-for-users-and-groups) for who can grant it and how.
 
+### Choosing identifiers
+
+Identifier help uses values from the published snapshots that the administrator is authorized to read. It is not a tenant-wide directory search and does not turn a directory display code into a gateway identity. Check the source and identifier type before selecting or copying a value; copying alone does not create a draft or publish a change.
+
+| Identifier | Where it belongs | Do not substitute |
+|---|---|---|
+| Gateway subject identifier | Subject entitlement or subject policy-role assignment; matches the gateway token's `sub` | Entra user object ID (`oid`), email, directory display code, or `sk1` |
+| Application/client identifier | Application entitlement or application policy-role assignment; matches `azp` or `appid` | Application object ID, service-principal object ID, or `ak1` |
+| Entra group object ID | Team membership mapping or a supported group policy-role assignment | Team key or a user object ID |
+| Canonical team key | A published governed-team selection | Entra group object ID |
+| Logical model alias | Entitlement allowlist, model budget, or fallback connection | Provider deployment name |
+| Provider deployment name | Capturing a model from the available provider deployments | Logical model alias |
+
+Current-caller diagnostics show server-derived `sk1` and `ak1` telemetry pseudonyms only when the verified identity and derivation configuration are available. They are not entitlement targets. Deployed diagnostics are scoped to the **control-plane token** and do not establish the coding client's inference-token identity; subjects and clients can differ across those contexts. The local label identifies deterministic fixture evidence, not a deployed caller.
+
+The browser does not derive these pseudonyms, receive the derivation secret, or accept a token for inspection. Missing evidence is unavailable rather than guessed. A failed clipboard operation reports that copying is unavailable instead of claiming success; use the visible value and its type to copy manually if permitted. An unavailable directory reading remains separate from authorized values already present in the published configuration.
+
 ### Editing model access and token limits
 
 The entitlement editor shows the selected binding's allowed models, requests per minute, tokens per minute, token quota, and quota period. Selecting another binding reloads its own values. Limits are independent of budgets: a request must satisfy every applicable control, not just the value edited on this screen.
 
 1. Select an existing entitlement to edit its allowed models and limits, or use **Add an entitlement** for a person, application, or existing governed team.
-2. For a person or application, enter the subject or application key used by the gateway, not a display name or email address. For a team, choose its published team mapping. The organization-wide ceiling is edited through its existing binding, not added as a second entitlement.
+2. For a person or application, enter the gateway subject (`sub`) or application/client identifier (`azp` or `appid`), not a display name, email address, or derived `sk1`/`ak1` telemetry key. Use [identifier help](#choosing-identifiers) to distinguish these values. For a team, choose its published team mapping. The organization-wide ceiling is edited through its existing binding, not added as a second entitlement.
 3. Set the rate limits and, when needed, a token quota together with its period: `Hourly`, `Daily`, `Weekly`, `Monthly`, or `Yearly`. These are token limits, not currency amounts.
 4. A blank field on a new entitlement adds no limit. Editing an existing limit requires an explicit replacement value; clearing its field does not remove the persisted limit. A quota and its period must be supplied together. An unchanged submission is refused.
 5. Submit the proposal and complete [Publishing](#publishing). Refreshing before publication still shows the active binding, not the draft's proposed values.
@@ -178,6 +207,20 @@ Because this screen does not browse the directory, you name the group yourself. 
 To find the object ID, open the [Microsoft Entra admin center](https://entra.microsoft.com), go to **Entra ID** > **Groups** > **All groups**, select the group, and copy **Object ID** from its overview. It is a GUID.
 
 Membership itself stays in the directory. Adding a team decides which group this product governs; who is in that group is changed in Entra, and the console never writes to it.
+
+### Reviewing team and model removal
+
+Removing a governed team or model is a configuration change, not cloud cleanup. It does not delete a Microsoft Entra group, change directory membership, or delete a provider model deployment. Historical revisions remain unchanged.
+
+1. In the team or model form, choose the target and removal reason, then review the removal plan.
+2. Read each blocking reference and the proposed action. Active, revoked, and expired references are considered; retirement alone does not remove a reference.
+3. Explicitly acknowledge every listed reference change. Nothing is selected automatically. If the resulting configuration would be invalid, resolve the reported blocker before proceeding; the workflow does not silently remove unrelated grants.
+4. Submit the acknowledged plan. The server re-reads active configuration and rejects a stale plan, incomplete acknowledgments, or references that do not belong to it.
+5. Open the resulting draft in [Publishing](#publishing), review its impact where available, and complete the existing approval and publication process. Planning and saving leave active policy unchanged.
+
+Team removal can require removing team-targeted entitlements, team-scoped governance assignments, and team-targeted fallback plans from the new snapshot. Model removal can require pruning the model from entitlement allowlists, removing per-model budgets, and removing fallback connections. Each operation is included in the plan rather than inferred from an unchecked checkbox. The existing validators remain the authority for whether the resulting set can be published.
+
+The workflow requires entitlement-write authority and global read scope; changes to budgets also require budget-write authority. These are existing governance capabilities, not new Entra role assignments. Publication failure continues through the existing recovery process: a draft is not active merely because some targets accepted it, and a retry uses the stored proposal rather than rebuilding it from changed browser input.
 
 ## Notifications
 

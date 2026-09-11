@@ -11,7 +11,7 @@ import { buildInitialGovernanceSet } from '../../app/governance-domain/policy/in
 import { readAccountRegion, readProviderQuota } from '../../app/providers/foundry-quota-query.mjs';
 import { deviceCodeAcquirer } from '../agent-auth-bridge/agent-auth-bridge.mjs';
 
-const REDIRECT_URI = 'http://localhost:4173';
+const REDIRECT_URI = 'http://localhost:4173/governance-bootstrap';
 const PUBLISHING_ROLES = Object.freeze(['Governance.Administer', 'Governance.Own']);
 const LOGIN_HOST = 'https://login.microsoftonline.com';
 const PKCE_TIMEOUT_MS = 10 * 60 * 1000;
@@ -149,7 +149,12 @@ export function buildAuthorizationUrl({ tenantId, clientId, scope, state, challe
   return url.toString();
 }
 
-export function createPkceAuthorizer({ transport = fetch, writeLine = console.log, tokenRequestOrigin = REDIRECT_URI } = {}) {
+export function createPkceAuthorizer({
+  transport = fetch,
+  writeLine = console.log,
+  tokenRequestOrigin = null,
+  createServerImpl = createServer,
+} = {}) {
   return async function authorize({ tenantId, clientId, scope }) {
     const verifier = randomBytes(48).toString('base64url');
     const challenge = createHash('sha256').update(verifier).digest('base64url');
@@ -157,9 +162,9 @@ export function createPkceAuthorizer({ transport = fetch, writeLine = console.lo
     const authorizeUrl = buildAuthorizationUrl({ tenantId, clientId, scope, state, challenge });
     const code = await new Promise((resolve, reject) => {
       let timer;
-      const server = createServer((request, response) => {
+      const server = createServerImpl((request, response) => {
         const callback = new URL(request.url, REDIRECT_URI);
-        if (request.method !== 'GET' || callback.pathname !== '/') {
+        if (request.method !== 'GET' || callback.pathname !== new URL(REDIRECT_URI).pathname) {
           response.writeHead(404).end();
           return;
         }

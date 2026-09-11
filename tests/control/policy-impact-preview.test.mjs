@@ -5,7 +5,8 @@ import {
   createPolicyImpactPreview,
   PolicyImpactPreviewError,
 } from '../../app/control-api/policy-impact-preview.mjs';
-import { createLocalPolicyResolver } from '../../app/functions/composition-root.mjs';
+import { createLocalPolicyResolver, createPolicyImpactPreviewFromStore } from '../../app/functions/composition-root.mjs';
+import { createPrincipalKeyDeriver } from '../../app/governance-domain/identity/principal-key-derivation.mjs';
 import { createDraftAuthor } from '../../app/control-api/draft-authoring.mjs';
 import { createGovernancePublisher, governancePublicationTargets } from '../../app/control-api/governance-publisher.mjs';
 import { createProposalPublisher } from '../../app/control-api/proposal-publication.mjs';
@@ -323,6 +324,32 @@ test('proposed preview uses the same resolver semantics as the policy after publ
     revisionId: candidate.revision.revisionId,
     expectedRevisionNumber: candidate.revision.revisionNumber,
   }));
+
+  const deployedPreview = createPolicyImpactPreviewFromStore({
+    store, scopeGroupId, clock, membershipSource: 'directory-claim',
+    deriver: createPrincipalKeyDeriver({ secret: 'preview-test-secret-of-sufficient-length', version: 1 }),
+  });
+  const deployedRequest = request({
+    revisionId: candidate.revision.revisionId,
+    expectedRevisionNumber: candidate.revision.revisionNumber,
+    targetContext: {
+      tenantId: 'tenant-local-demo', subjectId: 'user-local-admin',
+      applicationId: 'app-local-console', authenticationFlow: 'delegated',
+      groups: ['group-governance-admin'], evidence: 'verified-control-plane-token',
+    },
+  });
+  const composed = await deployedPreview.preview(deployedRequest);
+  assert.deepEqual(composed.before.policy.allowedModels, previewed.before.policy.allowedModels);
+  assert.deepEqual(composed.after.policy.allowedModels, previewed.after.policy.allowedModels);
+  await assert.rejects(deployedPreview.preview({
+    ...deployedRequest,
+    targetContext: { ...deployedRequest.targetContext, groups: undefined },
+  }), { name: 'PolicyImpactPreviewError', code: 'caller-policy-evidence-unavailable' });
+  const emptyGroups = await deployedPreview.preview({
+    ...deployedRequest,
+    targetContext: { ...deployedRequest.targetContext, groups: [] },
+  });
+  assert.notEqual(emptyGroups.state, 'unavailable');
 
   assert.equal((await approveAndPublish(candidate.revision.revisionId)).outcome, 'published');
   const publishedSnapshots = assembleGovernanceSnapshots(

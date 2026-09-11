@@ -10,6 +10,51 @@ import {
 
 const publicRoot = new URL('../../app/admin-ui/public/', import.meta.url);
 
+test('model identities show the registered deployment directly below the logical alias in both languages', async () => {
+  const script = await readFile(new URL('app.mjs', publicRoot), 'utf8');
+  const start = script.indexOf('function renderModelRecords(');
+  const end = script.indexOf('\nfunction renderModelCatalogue(', start);
+  assert.ok(start >= 0 && end > start);
+  function createElement(tag, className, textContent = '') {
+    return {
+      tag, className, textContent, dataset: {}, children: [],
+      append(...children) { this.children.push(...children); },
+    };
+  }
+  for (const locale of ['en', 'ko']) {
+    let rows;
+    const render = vm.runInNewContext(`(${script.slice(start, end)})`, {
+      document: { createElement },
+      createElement,
+      t: (key, values) => translate(locale, key, values),
+      elements: { modelsBody: { replaceChildren(...children) { rows = children; } } },
+      createCapabilityCell: () => createElement('td'),
+      createInternalLimitsCell: () => createElement('td'),
+      createProviderQuotaCell: () => createElement('td'),
+      createConsumptionCell: () => createElement('td'),
+    });
+    render({
+      quality: { countsMeasured: false },
+      records: ['deployed-primary', 'deployed-secondary', null, undefined].map((providerDeploymentName, index) => ({
+        modelKey: `logical-${index}`,
+        providerDeploymentName,
+        providerCode: 'azure-openai',
+        registrationState: 'registered',
+        lifecycle: 'generally-available',
+      })),
+    });
+    for (const [index, row] of rows.entries()) {
+      const identity = row.children[0];
+      assert.equal(identity.children[0].textContent, `logical-${index}`);
+      assert.equal(identity.children[1].tag, 'p');
+      assert.equal(identity.children[1].className, 'policy-meta');
+      assert.equal(identity.children[1].textContent, translate(locale, 'models.deploymentName', {
+        value: ['deployed-primary', 'deployed-secondary'][index] ?? translate(locale, 'state.unknown'),
+      }));
+    }
+  }
+});
+
 test('authoring language identifies draft proposals in both modes', () => {
   const keys = [
     'accessEdit.eyebrow',
@@ -95,7 +140,7 @@ test('stored proposal actions send the deployed session authorization header', a
 test('directory failure leaves manual access authoring available', async () => {
   const script = await readFile(new URL('app.mjs', publicRoot), 'utf8');
   const start = script.indexOf('async function showUsersGroupsAuthoringAlongsideState');
-  const end = script.indexOf('\n/** Bringing a person', start);
+  const end = script.indexOf('function identifierValues', start);
   assert.ok(start >= 0 && end > start);
   const panels = [{ hidden: false }, { hidden: false }];
   const usersGroupsContent = { hidden: true };
@@ -257,10 +302,10 @@ test('UI code renders text without HTML injection or client-side authorization c
     script,
     /const params = session\.mode === 'local' \? `\?persona=\$\{elements\.persona\.value\}` : '';/,
   );
-  assert.equal((script.match(/persona=\$\{elements\.persona\.value\}/g) ?? []).length, 2);
+  assert.equal((script.match(/persona=\$\{elements\.persona\.value\}/g) ?? []).length, 3);
   // A panel that would be refused is not offered. The authority is asked for once and
   // every authoring panel follows it in both modes, so a new panel cannot forget to ask.
-  assert.match(script, /async function refreshAuthoringAuthority\(\)[\s\S]{0,400}authoringAvailable = response\.ok/);
+  assert.match(script, /async function refreshAuthoringAuthorityForContext\(load, context\)[\s\S]{0,1400}authoringAvailable = usable/);
   assert.match(
     script,
     /async function showUsersGroupsAuthoringAlongsideState\(\) \{[\s\S]{0,220}elements\.usersGroupsContent\.hidden = false;[\s\S]{0,220}await loadAccessOptions\(\);/,
@@ -274,7 +319,7 @@ test('UI code renders text without HTML injection or client-side authorization c
   assert.match(script, /const registryModels = \[\.\.\.\(accessOptions\?\.models \?\? \[\]\)\]\.sort\(\);/);
   assert.match(script, /edges,\s*modelCodes: registryModels,/);
   assert.doesNotMatch(script, /if \(session\.mode !== 'local'\) \{\s*authoringAvailable = false;/);
-  assert.equal((script.match(/refreshAuthoringAuthority\(\)/g) ?? []).length, 5);
+  assert.equal((script.match(/refreshAuthoringAuthority\(\)/g) ?? []).length, 3);
   for (const panel of ['accessEdit', 'budgetAdd', 'fallbackEdit', 'modelAdd']) {
     assert.match(script, new RegExp(`elements\\.${panel}\\.hidden = true`));
   }

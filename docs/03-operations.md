@@ -140,6 +140,64 @@ Keep these actions separate:
 
 Deletion does not prove that a name is reusable, a directory object is absent, or a soft-deleted resource was purged. Service retention and the operator's permissions determine whether purge is available.
 
+### Generate An Offline Ownership Preview
+
+The [ownership contract tool](../tools/deployment/ownership-contract.mjs) can generate a sealed evidence bundle from separately captured deployment inputs, an output seed, exact-ID creation receipts, and authoritative resource readback. Outputs alone do not prove that a resource was created by this deployment. Existing resource groups, reused Foundry resources, and external references must retain their protected classifications.
+
+Prepare the input and output directory outside the repository. The generation input uses `llm-governance-ownership-generation-input/v1`; its receipts use `llm-governance-creation-receipt/v1`, and its captured readback uses `llm-governance-authoritative-readback/v1`. Keep the source commit, artifact and approved-plan digests, deployment identity, creation operation, exact resource IDs, preexisting resources, and readback timestamps together. Missing, conflicting, or stale evidence blocks generation; do not manufacture a receipt to make validation pass.
+
+Both the main deployment and standalone stable-key bootstrap seed shapes are supported. Preserve the emitted seed exactly, including the bootstrap's `keyVaultLifecycle.resourceId`; do not add main-only fields. Bootstrap evidence covers only that prerequisite, not resources added by later deployments.
+
+The main seed lists role assignments in both `createdResourceIds` and `createdAzureRoleAssignmentIds`. Keep both lists intact. The generator uses the more specific role-assignment kind once per ID, but still requires an exact creation receipt and authoritative principal and role-definition metadata. This overlap does not override preexisting or protected-target checks.
+
+Protected targets remain fail-closed by default. A narrow `deploymentInputs.protectedRoleAssignmentExceptions` opt-in can include an environment-created role assignment on the **exact protected Cognitive Services account** in a removal preview. Each entry must bind `roleAssignmentId`, exact account `scope`, `principalId`, `roleDefinitionId`, and `principalResourceId`. The role and its Functions or API Management managed-identity resource must both be newly created by this deployment, have exact-ID creation receipts, and agree with fresh authoritative readback. Subscription/resource-group grants, model/project descendants, reused or foreign principals, unsupported identity owners, and account/model deletion are never enabled by this exception. The exception list and digest are rechecked in the manifest, state, readback, bundle, and preview. Omit the field unless this explicit evidence is available.
+
+Capture the emitted seed through the direct ARM deployment response and retain that raw object. Azure CLI can decorate objects containing ARM IDs, for example by adding a derived `resourceGroup` member to `externalReferences`, even when that member was not emitted by the Bicep output. Such decorated JSON fails the strict seed schema and must not be silently rewritten or described as raw output. Preserve it separately as CLI-derived evidence, capture the direct ARM output, and document the comparison.
+
+The following pattern keeps the ARM token in memory and writes only the raw seed to a private path. Replace the placeholders with the exact authorized deployment identifiers. Do not log `$token` or `$headers`.
+
+```powershell
+$token = (az account get-access-token --resource https://management.azure.com/ -o json |
+  ConvertFrom-Json).accessToken
+$headers = @{ Authorization = "Bearer $token" }
+$uri = "https://management.azure.com/subscriptions/<subscription-id>/providers/Microsoft.Resources/deployments/<deployment-name>"
+$deployment = Invoke-RestMethod -Method Get -Uri $uri -Headers $headers -Body @{ 'api-version' = '2025-04-01' }
+$seed = ($deployment.properties.outputs.PSObject.Properties |
+  Where-Object Name -ieq 'OWNERSHIP_MANIFEST_SEED').Value.value
+$seed | ConvertTo-Json -Depth 20 | Set-Content ..\private-evidence\raw-ownership-seed.json
+Remove-Variable token, headers
+```
+
+#### First-install ownership evidence failures
+
+Do not omit an ownership error merely because application deployment succeeded. Treat the following first-install symptoms as evidence failures and preserve the rejected input and original deployment output:
+
+| Symptom | Meaning | Provenance-preserving recovery |
+|---|---|---|
+| `contract-unknown-field`, a missing main-only array, or `generation-key-vault-resource-id-mismatch` | A standalone bootstrap seed was treated as a main seed, a main seed was treated as bootstrap evidence, or fields were added to make the shapes match. | Capture the exact deployment and output again. Keep `keyVaultLifecycle.resourceId` only for the bootstrap variant. Keep the main role, directory, Graph assignment, protected-resource, and recursive-readback fields only on the main variant. Never copy fields between variants. |
+| `generation-created-kind-conflict` for an unrelated ID | One ID was claimed as incompatible resource kinds. | Correct the producer or evidence source. Do not choose a kind manually. The intentional main-seed overlap between `createdResourceIds` and `createdAzureRoleAssignmentIds` is supported only for the same role-assignment ID and resolves to `azure-role-assignment`; retain both emitted lists. |
+| `contract-unknown-field: outputSeed.externalReferences[].resourceGroup` | Azure CLI decorated an ARM-ID object with a derived resource-group field that Bicep did not emit. | Retain the CLI-derived file as historical evidence. Capture the seed from the direct ARM deployment response, compare the two records, and use the unmodified direct ARM seed. Do not silently strip the field from the historical file. |
+| `generation-created-target-is-protected` | A claimed created target is the same as, or a descendant of, a protected shared parent. | Keep the shared account, project, models, resource group, and preexisting permissions protected. By default no descendant is removable. Use the narrow role exception only for a newly created `Microsoft.Authorization/roleAssignments` resource whose scope is the exact protected Cognitive Services account. Other protected-parent grants remain blocked. |
+
+Each protected-account role exception must name the exact role-assignment ID, account scope, principal ID, role-definition ID, and owning Functions or API Management resource ID. Fresh authoritative readback must reproduce those values. Both the grant and owning managed-identity resource need exact-ID creation receipts from this deployment. A reused grant, reused or foreign principal, unsupported owner, broader subscription or resource-group scope, project/model descendant, changed role, missing receipt, stale readback, or tampered digest fails closed. The exception never permits deletion of the shared account or model.
+
+The same exception list has one additional Key Vault case: the exact built-in **Key Vault Secrets User** role (`4633458b-17de-408a-b874-0445c86b69e6`) on the exact protected vault may be previewed only when assigned to a newly created Function managed identity with matching receipts and fresh readback. The authoritative owner entry must include the ARM `kind` value as `resourceKind`; it must contain the exact comma-delimited token `functionapp`. This value is carried into the inventory and rechecked through seal, verification, state, readback, and preview, so an ordinary `Microsoft.Web/sites` web app is not treated as a Function. API Management owners, missing or changed kind evidence, other Key Vault roles, vault-secret descendants, subscription/resource-group scopes, reused grants, and preexisting principals remain denied. The vault, its secrets, and all existing grants remain protected. A first-install `generation-created-target-is-protected` for such a grant is recovered by adding only this exact evidence-bound exception; never reclassify or remove the vault from `protectedTargets`.
+
+After recovery, generate the bundle and run `Remove-Deployment.ps1 -Preview`. Verify that the bundle regenerates without disagreement, the preview is `ready`, both exception and protected-target digests agree through manifest/state/readback/preview, intended grants appear only under `delete.resources`, protected parents appear under `preserve`, and `mutationImplemented` is `false`. A `blocked`, missing, unknown, stale, or failed result is not a successful preview.
+
+The repository tests exercise bootstrap/main separation, intentional role-list overlap, raw-seed strictness, exact protected-account exceptions, principal ownership, tampering, freshness, and zero-mutation preview behavior with deterministic fixtures. Those tests validate contract behavior, not ownership of a customer's live resources. Deployment-specific evidence is verified only when its exact receipts and fresh readback produce a sealed `ready` preview. If another protected-parent target remains blocked after the approved Cognitive Services exceptions, report that target as a remaining blocker rather than broadening the exception or describing the installation as fully verified.
+
+```powershell
+node tools/deployment/ownership-contract.mjs generate --input ..\private-evidence\generation-input.json --output ..\private-evidence\ownership-bundle.json
+pwsh -NoProfile -File tools/distribution/Remove-Deployment.ps1 -EvidenceBundlePath ..\private-evidence\ownership-bundle.json -Preview -OutputPath ..\private-evidence\removal-preview.json
+```
+
+The generated `llm-governance-ownership-evidence-bundle/v1` contains the sealed manifest, retained state, bound readback, and removal preview. Previewing the bundle rechecks the evidence and its freshness; an old bundle is not a standing approval. Use new output paths rather than overwriting retained evidence, and keep all environment-specific files out of public commits.
+
+Postprovision generation is opt-in: set both `OWNERSHIP_GENERATION_INPUT_FILE` and `OWNERSHIP_EVIDENCE_BUNDLE_FILE` to the prepared private paths before an already authorized deployment. With neither set, the hook does not generate evidence; setting only one is an error. The hook does not capture cloud receipts or readback for you, and its input must describe the actual completed operation.
+
+This pipeline validates agreement between supplied records, not their independent authenticity or live cloud state. It performs no Azure or Microsoft Graph calls and no deletion or purge. A ready preview remains a local plan; every later mutation still needs separately verified ownership and explicit phase authorization.
+
 ### Soft Delete And Name Reuse
 
 - Key Vault purge protection remains enabled with the configured soft-delete retention period. A protected vault cannot be purged before retention expires.

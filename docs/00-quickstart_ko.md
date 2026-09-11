@@ -141,6 +141,15 @@ azd provision --preview --no-state --environment $environment --no-prompt
 
 ```powershell
 azd provision --no-state --environment $environment --no-prompt
+```
+
+**애플리케이션 코드를 배포하기 전에 사용자 및 그룹 명단을 사용할지 결정합니다.** 템플릿과 배포 후크는 `GroupMember.Read.All`을 **자동으로 부여하지 않습니다**. 명단이 필요하면 Privileged Role Administrator 또는 Global Administrator가 지금 해당 환경의 제어 영역 관리 ID에 [디렉터리 권한을 부여하고 다시 조회](01-deployment_ko.md#entra-users--groups-화면을-위한-디렉터리-읽기-권한)합니다. 제품은 설정된 팀 그룹만 조회하지만 권한 자체는 테넌트 전체에 적용됩니다. 승인하지 않으면 권한 부여를 건너뜁니다. 이 경우 명단은 사용할 수 없지만 게이트웨이 정책 적용에는 해당 권한이 필요하지 않습니다.
+
+**이 ID가 이미 Graph 토큰을 요청했다면 권한 반영에 수 시간이 걸릴 수 있습니다.** Azure 관리 ID 토큰은 리소스 URI별로 **약 24시간** 캐시되며, 이는 반영 완료를 보장하는 기한이 아닙니다. Function을 다시 시작하거나 재배포해도 이 캐시를 강제로 갱신할 수 없습니다. 새 환경에서는 프로비저닝과 최초 코드 배포 사이에 권한을 부여하고 확인하면 위험을 줄일 수 있지만 즉시 사용할 수 있다고 보장하지는 않습니다.
+
+루트 프로비저닝이 성공하고 선택한 권한 단계를 완료한 뒤 두 서비스를 배포합니다.
+
+```powershell
 azd deploy --all --environment $environment --no-prompt
 ```
 
@@ -154,6 +163,8 @@ azd deploy --all --environment $environment --no-prompt
 - `ADMIN_INTERFACE_ENDPOINT`: 콘솔 URL
 
 출력에 `API_URL`이 없다면 선택한 모드에서 게이트웨이를 배포하지 않은 것입니다. 루트 프로비저닝은 성공했지만 애플리케이션 배포가 실패했다면 거버넌스를 게시하기 전에 해당 배포를 먼저 수정합니다.
+
+최초 설치에서 오류가 발생하면 `AADSTS9002326`, 미리 보기 그룹 클레임 누락, 디렉터리 권한 반영 지연 및 불완전한 what-if 범위를 설명하는 [설치 문제 해결 절차](01-deployment_ko.md#문제-해결)를 따릅니다. 소유권 입력이 거부되면 [소유권 증거 복구 절차](03-operations_ko.md#최초-설치-소유권-증거-오류)를 확인합니다. 실패한 증거를 보존하고, 검사를 통과시키기 위해 앱 등록을 다시 만들거나 권한을 확대하지 않습니다.
 
 ## 최소 governance 게시
 

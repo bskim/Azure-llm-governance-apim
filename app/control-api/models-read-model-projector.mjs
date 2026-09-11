@@ -145,6 +145,7 @@ function projectDescriptor(descriptor) {
   return {
     registrationState: 'registered',
     providerCode: descriptor.providerKey,
+    providerDeploymentName: descriptor.providerDeploymentName ?? null,
     lifecycle: descriptor.lifecycle,
     apiFamilies: [...descriptor.apiFamilies],
     safetyPolicy: descriptor.safetyPolicy,
@@ -199,6 +200,7 @@ function projectProviderAgreement({ descriptor, snapshot, snapshotState }) {
 const UNREGISTERED = Object.freeze({
   registrationState: 'unregistered',
   providerCode: null,
+  providerDeploymentName: null,
   lifecycle: null,
   apiFamilies: [],
   safetyPolicy: null,

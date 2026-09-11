@@ -140,6 +140,64 @@ Foundry에 직접 보내는 요청은 게이트웨이의 정책과 텔레메트�
 
 삭제 완료만으로는 이름을 재사용할 수 있는지, 디렉터리 개체가 사라졌는지, 일시 삭제된 리소스가 영구 삭제되었는지 알 수 없습니다. 영구 삭제 가능 여부는 서비스의 보존 정책과 운영자 권한에 따라 달라집니다.
 
+### 오프라인 소유권 미리 보기 생성
+
+[소유권 계약 도구](../tools/deployment/ownership-contract.mjs)는 별도로 수집한 배포 입력, 출력 시드, 정확한 ID의 생성 영수증, 권위 있는 리소스 재조회 기록으로 봉인된 증거 묶음을 생성할 수 있습니다. 출력만으로 해당 배포가 리소스를 새로 만들었다고 증명하지는 않습니다. 기존 리소스 그룹, 재사용 Foundry 리소스, 외부 참조는 보호 분류를 유지해야 합니다.
+
+저장소 밖에 입력 파일과 출력 디렉터리를 준비합니다. 생성 입력은 `llm-governance-ownership-generation-input/v1`, 영수증은 `llm-governance-creation-receipt/v1`, 수집한 재조회 기록은 `llm-governance-authoritative-readback/v1`을 사용합니다. 소스 커밋, 산출물과 승인 계획의 다이제스트, 배포 신원, 생성 작업, 정확한 리소스 ID, 기존 리소스, 재조회 시각을 함께 보관합니다. 증거가 누락되거나 충돌하거나 오래되면 생성을 차단하며, 검증을 통과시키려고 영수증을 만들어 내지 않습니다.
+
+본 배포와 독립적인 안정 키 부트스트랩의 출력 시드 형식을 모두 지원합니다. 부트스트랩의 `keyVaultLifecycle.resourceId`를 포함해 실제 출력 시드를 그대로 보존하고 본 배포 전용 필드를 덧붙이지 않습니다. 부트스트랩 증거는 해당 선행 리소스만 다루며 이후 배포에서 추가된 리소스까지 포함하지는 않습니다.
+
+본 배포 시드는 역할 할당을 `createdResourceIds`와 `createdAzureRoleAssignmentIds` 양쪽에 포함합니다. 두 목록을 그대로 보존합니다. 생성기는 ID별로 더 구체적인 역할 할당 유형을 한 번만 적용하지만, 정확한 생성 영수증과 권위 있는 보안 주체 및 역할 정의 메타데이터는 여전히 필요합니다. 이 중복 표기는 기존 리소스나 보호 대상 검사를 무효화하지 않습니다.
+
+보호 대상은 기본적으로 계속 차단됩니다. 제한적인 `deploymentInputs.protectedRoleAssignmentExceptions` 선택 항목을 사용하면 이 환경에서 새로 만든 역할 할당 중 **정확히 보호된 Cognitive Services 계정** 범위의 항목만 제거 미리 보기에 포함할 수 있습니다. 각 항목은 `roleAssignmentId`, 정확한 계정 `scope`, `principalId`, `roleDefinitionId`, `principalResourceId`를 결합해야 합니다. 역할과 그 역할의 Functions 또는 API Management 관리 ID 리소스는 모두 이 배포가 새로 만들었어야 하며, 정확한 ID의 생성 영수증과 최신 권위 재조회 결과가 일치해야 합니다. 구독/리소스 그룹 범위 권한, 모델/프로젝트 하위 항목, 재사용 또는 외부 보안 주체, 지원하지 않는 ID 소유자, 계정/모델 삭제는 이 예외로 허용되지 않습니다. 예외 목록과 다이제스트는 매니페스트, 상태, 재조회, 묶음, 미리 보기 단계에서 다시 검증됩니다. 이 명시적 증거가 없으면 해당 필드를 생략합니다.
+
+배포의 직접 ARM 응답에서 출력 시드를 수집하고 원본 개체를 보관합니다. Azure CLI는 ARM ID가 든 개체에 Bicep 출력에 없던 파생 필드를 장식할 수 있습니다. 예를 들어 `externalReferences`에 `resourceGroup`을 추가할 수 있습니다. 이렇게 장식된 JSON은 엄격한 시드 스키마를 통과하지 않으며, 이를 조용히 고치거나 원본 출력이라고 설명해서는 안 됩니다. CLI 파생 증거로 별도 보관하고 직접 ARM 출력을 수집한 뒤 두 결과의 차이를 기록합니다.
+
+다음 패턴은 ARM 토큰을 메모리에만 유지하고 원시 시드만 비공개 경로에 씁니다. 자리표시자를 정확하고 승인된 배포 식별자로 바꿉니다. `$token`이나 `$headers`를 로그에 남기지 않습니다.
+
+```powershell
+$token = (az account get-access-token --resource https://management.azure.com/ -o json |
+  ConvertFrom-Json).accessToken
+$headers = @{ Authorization = "Bearer $token" }
+$uri = "https://management.azure.com/subscriptions/<subscription-id>/providers/Microsoft.Resources/deployments/<deployment-name>"
+$deployment = Invoke-RestMethod -Method Get -Uri $uri -Headers $headers -Body @{ 'api-version' = '2025-04-01' }
+$seed = ($deployment.properties.outputs.PSObject.Properties |
+  Where-Object Name -ieq 'OWNERSHIP_MANIFEST_SEED').Value.value
+$seed | ConvertTo-Json -Depth 20 | Set-Content ..\private-evidence\raw-ownership-seed.json
+Remove-Variable token, headers
+```
+
+#### 최초 설치 소유권 증거 오류
+
+애플리케이션 배포가 성공했더라도 소유권 오류를 생략하지 않습니다. 다음 최초 설치 증상은 증거 오류로 처리하고 거부된 입력과 원본 배포 출력을 보존합니다.
+
+| 증상 | 의미 | 출처를 보존하는 복구 방법 |
+|---|---|---|
+| `contract-unknown-field`, 본 배포 전용 배열 누락 또는 `generation-key-vault-resource-id-mismatch` | 독립 부트스트랩 시드를 본 배포 시드로 처리했거나, 본 배포 시드를 부트스트랩 증거로 처리했거나, 형식을 맞추려고 필드를 추가했습니다. | 정확한 배포와 출력을 다시 수집합니다. `keyVaultLifecycle.resourceId`는 부트스트랩 변형에만 유지합니다. 역할, 디렉터리, Graph 할당, 보호 리소스 및 재귀 재조회 필드는 본 배포 변형에만 유지합니다. 변형 사이에 필드를 복사하지 않습니다. |
+| 관련 없는 ID의 `generation-created-kind-conflict` | 한 ID가 호환되지 않는 여러 리소스 종류로 선언되었습니다. | 생성자 또는 증거 출처를 수정합니다. 종류를 수동으로 선택하지 않습니다. 본 배포 시드에서 동일한 역할 할당 ID가 `createdResourceIds`와 `createdAzureRoleAssignmentIds`에 함께 있는 경우만 의도된 중복으로 지원하며 `azure-role-assignment`로 결정합니다. 출력된 두 목록을 모두 보존합니다. |
+| `contract-unknown-field: outputSeed.externalReferences[].resourceGroup` | Azure CLI가 Bicep에서 출력하지 않은 파생 리소스 그룹 필드로 ARM ID 개체를 장식했습니다. | CLI 파생 파일을 과거 증거로 보존합니다. 직접 ARM 배포 응답에서 시드를 수집하고 두 기록을 비교한 뒤 수정하지 않은 직접 ARM 시드를 사용합니다. 과거 파일에서 필드를 조용히 제거하지 않습니다. |
+| `generation-created-target-is-protected` | 새로 만들었다고 선언한 대상이 보호된 공유 상위 대상과 같거나 그 하위에 있습니다. | 공유 계정, 프로젝트, 모델, 리소스 그룹 및 기존 권한을 보호 상태로 유지합니다. 기본적으로 어떤 하위 대상도 제거할 수 없습니다. 정확히 보호된 Cognitive Services 계정 범위에 있고 새로 만든 `Microsoft.Authorization/roleAssignments` 리소스에만 제한적인 역할 예외를 사용합니다. 그 밖의 보호된 상위 대상 하위 권한은 계속 차단합니다. |
+
+보호된 계정 역할 예외는 정확한 역할 할당 ID, 계정 범위, 보안 주체 ID, 역할 정의 ID, Functions 또는 API Management 소유 리소스 ID를 지정해야 합니다. 최신 권위 재조회 결과가 이 값을 그대로 재현해야 합니다. 역할과 이를 소유한 관리 ID 리소스 모두 이 배포의 정확한 ID 생성 영수증이 있어야 합니다. 재사용 역할, 재사용 또는 외부 보안 주체, 지원하지 않는 소유자, 더 넓은 구독 또는 리소스 그룹 범위, 프로젝트/모델 하위 대상, 변경된 역할, 누락된 영수증, 오래된 재조회 또는 변조된 다이제스트는 차단됩니다. 이 예외로 공유 계정이나 모델을 삭제할 수는 없습니다.
+
+같은 예외 목록에는 Key Vault에 대한 한 가지 추가 사례가 있습니다. 정확히 보호된 자격 증명 모음 범위의 기본 제공 **Key Vault Secrets User** 역할(`4633458b-17de-408a-b874-0445c86b69e6`)은 생성 영수증과 최신 재조회가 일치하는 새 Function 관리 ID에 할당된 경우에만 미리 보기에 포함할 수 있습니다. 권위 있는 소유자 항목은 ARM `kind` 값을 `resourceKind`로 포함해야 하며, 쉼표로 구분된 정확한 `functionapp` 토큰이 있어야 합니다. 이 값은 인벤토리에 포함되어 봉인, 검증, 상태, 재조회 및 미리 보기 전체에서 다시 검사되므로 일반 `Microsoft.Web/sites` 웹앱을 Function으로 취급하지 않습니다. API Management 소유자, 누락되거나 변경된 kind 증거, 다른 Key Vault 역할, 자격 증명 모음의 비밀 하위 대상, 구독/리소스 그룹 범위, 재사용 역할 및 기존 보안 주체는 계속 거부됩니다. 자격 증명 모음, 비밀 및 모든 기존 역할은 보호 상태로 유지됩니다. 최초 설치 중 이러한 역할에 `generation-created-target-is-protected`가 발생하면 이 정확한 증거 결합 예외만 추가해 복구합니다. 자격 증명 모음을 재분류하거나 `protectedTargets`에서 제거하지 않습니다.
+
+복구 후 증거 묶음을 생성하고 `Remove-Deployment.ps1 -Preview`를 실행합니다. 묶음이 불일치 없이 다시 생성되는지, 미리 보기 상태가 `ready`인지, 예외 및 보호 대상 다이제스트가 매니페스트/상태/재조회/미리 보기 전체에서 일치하는지 확인합니다. 의도한 역할은 `delete.resources`에만 있어야 하고 보호된 상위 대상은 `preserve`에 있어야 하며 `mutationImplemented`는 `false`여야 합니다. `blocked`, 누락, 알 수 없음, 만료 또는 실패 결과를 성공한 미리 보기로 간주하지 않습니다.
+
+저장소 테스트는 결정론적 픽스처로 부트스트랩/본 배포 분리, 의도된 역할 목록 중복, 원시 시드 엄격성, 정확한 보호 계정 예외, 보안 주체 소유권, 변조, 최신성 및 변경 없는 미리 보기 동작을 검증합니다. 이 테스트는 계약 동작을 검증할 뿐 고객의 실제 리소스 소유권을 증명하지 않습니다. 배포별 증거는 정확한 영수증과 최신 재조회로 봉인된 `ready` 미리 보기를 만들었을 때만 검증됩니다. 승인된 Cognitive Services 예외를 적용한 뒤에도 다른 보호 상위 대상이 차단되면 예외를 넓히거나 설치 전체가 검증되었다고 설명하지 말고 해당 대상을 남은 차단 요인으로 보고합니다.
+
+```powershell
+node tools/deployment/ownership-contract.mjs generate --input ..\private-evidence\generation-input.json --output ..\private-evidence\ownership-bundle.json
+pwsh -NoProfile -File tools/distribution/Remove-Deployment.ps1 -EvidenceBundlePath ..\private-evidence\ownership-bundle.json -Preview -OutputPath ..\private-evidence\removal-preview.json
+```
+
+생성된 `llm-governance-ownership-evidence-bundle/v1`에는 봉인된 매니페스트, 유지된 상태, 연결된 재조회 기록, 제거 미리 보기가 포함됩니다. 묶음의 미리 보기를 만들 때 증거와 최신성을 다시 확인하므로 오래된 묶음은 상시 승인이 아닙니다. 보관된 증거를 덮어쓰지 않고 새 출력 경로를 사용하며, 모든 환경별 파일은 공개 커밋에서 제외합니다.
+
+프로비저닝 후 증거 생성은 선택 사항입니다. 이미 승인된 배포를 시작하기 전에 `OWNERSHIP_GENERATION_INPUT_FILE`과 `OWNERSHIP_EVIDENCE_BUNDLE_FILE`을 모두 준비된 비공개 경로로 설정합니다. 둘 다 없으면 훅은 증거를 생성하지 않으며, 하나만 설정하면 오류가 발생합니다. 훅이 클라우드 영수증이나 재조회 기록을 대신 수집하지는 않으므로 입력은 실제 완료된 작업을 설명해야 합니다.
+
+이 흐름은 입력 기록 간의 일치를 검증하며, 기록의 독립적인 진위나 실시간 클라우드 상태를 검증하지는 않습니다. Azure 또는 Microsoft Graph 호출, 삭제, 영구 제거를 수행하지 않습니다. 준비된 미리 보기는 로컬 계획이며, 이후의 각 변경에는 별도로 검증된 소유권과 명시적인 단계별 승인이 필요합니다.
+
 ### 일시 삭제 및 이름 재사용
 
 - Key Vault의 영구 삭제 보호는 설정된 일시 삭제 보존 기간 동안 유지됩니다. 보호된 자격 증명 모음은 보존 기간이 만료되기 전에 영구 삭제할 수 없습니다.

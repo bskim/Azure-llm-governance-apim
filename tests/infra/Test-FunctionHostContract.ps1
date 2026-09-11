@@ -44,7 +44,7 @@ $httpTriggerCount = [regex]::Matches($registrations, 'app\.http\(').Count
 $timerTriggerCount = [regex]::Matches($registrations, 'app\.timer\(').Count
 $scaleGroupCount = 1 + $timerTriggerCount
 $worstCaseCores = 1 + ($scaleGroupCount * $maximumInstanceCount)
-Assert-Host ($httpTriggerCount -eq 23) 'The FC1 inventory must account for exactly 23 HTTP functions sharing one HTTP scale group.'
+Assert-Host ($httpTriggerCount -eq 25) 'The FC1 inventory must account for exactly 25 HTTP functions sharing one HTTP scale group.'
 Assert-Host ($timerTriggerCount -eq 6) 'The FC1 inventory must conservatively treat exactly six timer functions as six scale groups.'
 Assert-Host ($scaleGroupCount -eq 7) 'The FC1 budget must cover seven total scale groups.'
 Assert-Host ($worstCaseCores -eq 197) 'The FC1 budget formula 1 + (7 * 28) must equal 197 cores.'
@@ -86,7 +86,9 @@ foreach ($registration in @(
         # introduced by publishing a whole set from a script, which is a developer task
         # rather than an administrative one.
         @{ Route = 'v1/admin/teams'; Function = 'changeTeam' },
-        @{ Route = 'v1/admin/models'; Function = 'changeModel' })) {
+        @{ Route = 'v1/admin/models'; Function = 'changeModel' },
+        @{ Route = 'v1/admin/removal-plan'; Function = 'removalPlan' },
+        @{ Route = 'v1/admin/removal-proposals'; Function = 'removalProposal' })) {
     $functionMatch = [regex]::Match(
         $registrations,
         "app\.http\('$($registration.Function)',\s*\{(?<body>.*?)\r?\n\s*\}\);",

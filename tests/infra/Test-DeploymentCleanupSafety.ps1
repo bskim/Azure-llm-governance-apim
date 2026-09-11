@@ -29,7 +29,11 @@ foreach ($requiredEvidence in @('ManifestPath', 'StatePath', 'ReadbackPath', 'Ou
     Assert-CleanupSafety ($source -match $evidencePattern) "Cleanup must require $requiredEvidence."
 }
 Assert-CleanupSafety ($source.Contains('[ValidateScript({ -not (Test-Path -LiteralPath $_) })]')) 'Cleanup must refuse to overwrite an existing evidence output.'
-Assert-CleanupSafety ($source -match "\[Parameter\(Mandatory, ParameterSetName = 'Preview'\)\]\s*\[switch\]\`$Preview") 'Cleanup preview must require an explicit preview switch.'
+$previewParameter = (Get-Command -Name $cleanupPath -CommandType ExternalScript).Parameters['Preview']
+Assert-CleanupSafety ($null -ne $previewParameter -and $previewParameter.ParameterType -eq [switch]) 'Cleanup preview must expose an explicit preview switch.'
+foreach ($previewSet in @('Preview', 'GeneratedPreview')) {
+    Assert-CleanupSafety ($previewParameter.ParameterSets.ContainsKey($previewSet) -and $previewParameter.ParameterSets[$previewSet].IsMandatory) "Cleanup $previewSet must require an explicit preview switch."
+}
 Assert-CleanupSafety ($source -match "'\.\.\\deployment\\ownership-contract\.mjs'") 'Cleanup must delegate to the offline ownership-contract engine.'
 
 $approvalContracts = [ordered]@{

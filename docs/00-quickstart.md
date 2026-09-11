@@ -141,6 +141,15 @@ Provision only after the preview matches the selected environment:
 
 ```powershell
 azd provision --no-state --environment $environment --no-prompt
+```
+
+**Before deploying application code, decide whether to enable the Users and Groups roster.** `GroupMember.Read.All` is **not granted automatically** by the templates or deployment hooks. For the roster, have a Privileged Role Administrator (or Global Administrator) perform the [directory permission grant and readback](01-deployment.md#entra-directory-reading-for-users-and-groups) now, against this environment's control-plane managed identity. The permission is tenant-wide even though the product queries only configured team groups. If you do not approve it, skip the grant; the roster remains unavailable, but gateway policy enforcement does not require it.
+
+**Allow for several hours of permission propagation if this identity already requested a Graph token.** Azure's managed-identity token cache is around **24 hours** per resource URI, not a guaranteed completion deadline. Restarting or redeploying the Function cannot force that cache to refresh. On a fresh environment, granting and verifying the permission between provisioning and the first code deployment reduces this risk; immediate availability is still not guaranteed.
+
+After the root provision succeeds and the chosen permission step is complete, deploy both services:
+
+```powershell
 azd deploy --all --environment $environment --no-prompt
 ```
 
@@ -154,6 +163,8 @@ Read the final outputs and keep these values available for the next steps:
 - `ADMIN_INTERFACE_ENDPOINT`: the console URL.
 
 If the output has no `API_URL`, the selected mode did not deploy a gateway. If the root provision succeeded but the application deployment failed, fix that deployment before publishing governance.
+
+For first-install failures, use the [installation troubleshooting procedures](01-deployment.md#troubleshooting), including `AADSTS9002326`, preview group-claim failures, directory permission delays, and incomplete what-if coverage. For rejected ownership inputs, follow [ownership evidence recovery](03-operations.md#first-install-ownership-evidence-failures). Preserve the failed evidence; do not recreate app registrations or broaden permissions simply to make a check pass.
 
 ## Publish Minimal Governance
 

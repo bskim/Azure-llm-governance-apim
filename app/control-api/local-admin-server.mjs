@@ -24,6 +24,7 @@ import { projectUsersGroupsReadModel } from './users-groups-read-model-projector
 import { createEffectivePolicyHandler } from '../functions/handlers/effective-policy.mjs';
 import {
   createLocalPolicyResolver,
+  createLocalIdentifierDeriver,
   createPersonaRuntime,
   createPersonaScopedResolver,
   EVALUATION_TIME as evaluationTime,
@@ -31,6 +32,7 @@ import {
   PERSONAS,
   PUBLISHED_CONFIGURATION as publishedConfiguration,
 } from '../functions/composition-root.mjs';
+import { buildIdentifierEvidence } from './identifier-assistance.mjs';
 import { createSequenceIdGenerator } from '../local-adapters/deterministic-time.mjs';
 import { createLocalGovernanceSource } from './local-governance-source.mjs';
 import {
@@ -76,6 +78,8 @@ import {
   createPolicyImpactPreview,
   PolicyImpactPreviewError,
 } from './policy-impact-preview.mjs';
+import { createGovernanceRemovalService } from './governance-removal-service.mjs';
+import { GovernanceRemovalRefusedError } from '../governance-domain/removal/governance-removal.mjs';
 
 // Reading governance and changing it are different authorities. An auditor sees every
 // scope and may change nothing, so the panel is not offered to them rather than offered
@@ -388,6 +392,11 @@ export function createLocalAdminServer({ source = createLocalGovernanceSource({ 
       ).resolve(policyRequest);
     },
   });
+  const removalService = createGovernanceRemovalService({
+    readPublishedSnapshots: currentSnapshots,
+    drafts,
+    clock,
+  });
 
   /**
    * What an edit starts from, and what the screens show. Before anything is published
@@ -524,6 +533,64 @@ export function createLocalAdminServer({ source = createLocalGovernanceSource({ 
             requestId,
           },
         }, requestId);
+      }
+      return;
+    }
+
+    if (['/api/local/removal-plan', '/api/local/removal-proposals'].includes(url.pathname)) {
+      if (request.method !== 'POST') {
+        json(response, 405, { error: { code: 'method_not_allowed', requestId } }, requestId);
+        return;
+      }
+      await seedRevisions();
+      let body;
+      try {
+        body = await readJsonBody(request);
+      } catch {
+        json(response, 400, { error: { code: 'body_not_readable', requestId } }, requestId);
+        return;
+      }
+      try {
+        const persona = url.searchParams.get('persona') ?? 'governance-admin';
+        if (!isKnownPersona(persona)) {
+          json(response, 400, { error: { code: 'selection_not_supported', requestId } }, requestId);
+          return;
+        }
+        const runtime = createPersonaRuntime(persona, idGenerator);
+        const identity = await runtime.identityAdapter.getVerifiedIdentity();
+        const context = await runtime.factory.create(identity);
+        const { authorization } = evaluateLocalAuthorization(context, await currentSnapshots());
+        assertAuthorizedReadScope({ authorization, scope: 'global' });
+        assertGovernanceAuthor(authorization);
+
+        if (url.pathname === '/api/local/removal-plan') {
+          json(response, 200, await removalService.plan(body), requestId);
+          return;
+        }
+        const proposed = await removalService.propose({
+          ...body,
+          authoredBy: `local-${persona}`,
+        });
+        json(response, 201, proposed, requestId);
+      } catch (error) {
+        if (['not-a-governance-author', 'scope-denied', 'membership-not-authoritative'].includes(error.code)) {
+          json(response, 403, { outcome: 'refused', reasonCode: error.code, requestId }, requestId);
+          return;
+        }
+        const malformed = [
+          'removal-target-invalid',
+          'removal-selection-required',
+          'removal-selection-duplicate',
+        ].includes(error.code);
+        const status = error instanceof GovernanceRemovalRefusedError
+          ? (malformed ? 400 : 409)
+          : 500;
+        json(
+          response,
+          status,
+          { outcome: 'refused', reasonCode: error.code ?? 'removal_failed', requestId },
+          requestId,
+        );
       }
       return;
     }
@@ -821,6 +888,13 @@ export function createLocalAdminServer({ source = createLocalGovernanceSource({ 
           {
             readModelVersion: 'access-options.v1',
             generatedAt: evaluationTime,
+            identifierEvidence: buildIdentifierEvidence({
+              identity: verifiedIdentity,
+              deriver: createLocalIdentifierDeriver(),
+              snapshots,
+              scope: 'local-authoritative-fixture',
+              source: 'local-authoritative-fixture',
+            }),
             models: snapshots.modelRegistrySnapshot.models.map((model) => model.modelKey),
             budgetOptions: { throttleTierCodes: [...DEPLOYED_THROTTLE_TIER_CODES] },
             teams: snapshots.entitlementSnapshot.teamCatalog.map((mapping) => ({

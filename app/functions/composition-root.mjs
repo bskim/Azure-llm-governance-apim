@@ -1,9 +1,14 @@
 import { DefaultAzureCredential } from '@azure/identity';
 
 import { createPolicyResolver } from '../control-api/policy-resolution-endpoint.mjs';
-import { createPolicyImpactPreview } from '../control-api/policy-impact-preview.mjs';
+import { createPolicyImpactPreview, PolicyImpactPreviewError } from '../control-api/policy-impact-preview.mjs';
 import { createGatewayIdentityResolver } from '../control-api/gateway-identity.mjs';
-import { createGovernancePublisher } from '../control-api/governance-publisher.mjs';
+import {
+  createGovernancePublisher,
+  governancePublicationTargets,
+} from '../control-api/governance-publisher.mjs';
+import { createDraftAuthor } from '../control-api/draft-authoring.mjs';
+import { createGovernanceRemovalService } from '../control-api/governance-removal-service.mjs';
 import { createPublishedPolicySource } from '../control-api/published-policy-source.mjs';
 import { createStoredMembershipResolver } from '../control-api/stored-membership-resolver.mjs';
 import { createTokenClaimsMembershipResolver } from '../control-api/token-claims-membership-resolver.mjs';
@@ -26,6 +31,10 @@ import {
 } from './handlers/admin-governance-edit.mjs';
 import { createModelChangeHandler } from './handlers/admin-model-edit.mjs';
 import { createModelPricesHandler } from './handlers/admin-model-prices.mjs';
+import {
+  createRemovalPlanHandler,
+  createRemovalProposalHandler,
+} from './handlers/admin-removal.mjs';
 import {
   createModelsHandler,
   createUsersGroupsHandler,
@@ -101,6 +110,10 @@ export const RESOLVER_CONFIG = Object.freeze({
 /** Local only, so pseudonyms stay stable within a session. Never a deployed key. */
 const LOCAL_DERIVATION_SECRET = 'local-demo-principal-key-secret-not-a-production-value';
 
+export function createLocalIdentifierDeriver() {
+  return createPrincipalKeyDeriver({ secret: LOCAL_DERIVATION_SECRET, version: 1 });
+}
+
 export function isKnownPersona(personaName) {
   return personaName === undefined || Object.hasOwn(PERSONAS, personaName);
 }
@@ -151,7 +164,7 @@ export function createPersonaRuntime(personaName, idGenerator, { membershipStatu
 export function createLocalPolicyResolver(personaName, idGenerator, snapshotProvider = () => getDeterministicGovernanceSnapshots()) {
   const runtime = createPersonaRuntime(personaName, idGenerator);
   return createPolicyResolver({
-    deriver: createPrincipalKeyDeriver({ secret: LOCAL_DERIVATION_SECRET, version: 1 }),
+    deriver: createLocalIdentifierDeriver(),
     scopeGroupId: 'organization',
     snapshotProvider,
     principalContextFactory: runtime.factory,
@@ -309,6 +322,13 @@ export function createPolicyImpactPreviewFromStore({
       return selectActiveRevision(await store.queryConfigurationRevisions({ scopeGroupId }));
     },
     async resolvePolicy({ snapshots, request, targetContext, evaluatedAt }) {
+      if (
+        membershipSource === 'directory-claim'
+        && targetContext?.authenticationFlow === 'delegated'
+        && !Array.isArray(targetContext.groups)
+      ) {
+        throw new PolicyImpactPreviewError('caller-policy-evidence-unavailable');
+      }
       const evaluationClock = { nowIso: () => evaluatedAt };
       const resolver = createPolicyResolver({
         deriver,
@@ -723,6 +743,16 @@ export function createDeployedAccessAuthoringHandlers(
   };
 
   const readProviderDeployments = createProviderQuotaReader(environment, clock);
+  const removalService = createGovernanceRemovalService({
+    readPublishedSnapshots: shared.readPublishedSnapshots,
+    drafts: createDraftAuthor({
+      store,
+      scopeGroupId: ROLLUP_CONFIG.scopeGroupId,
+      clock,
+      targets: governancePublicationTargets({ includeMembership: false }),
+    }),
+    clock,
+  });
 
   return {
     accessOptions: createAccessOptionsHandler(shared),
@@ -731,6 +761,8 @@ export function createDeployedAccessAuthoringHandlers(
     changeFallbackPlan: createFallbackChangeHandler(shared),
     changeAssignment: createAssignmentChangeHandler(shared),
     changeTeam: createTeamChangeHandler(shared),
+    removalPlan: createRemovalPlanHandler({ ...shared, service: removalService }),
+    removalProposal: createRemovalProposalHandler({ ...shared, service: removalService }),
     // Capturing a model requires the provider's own answer about the deployment, so
     // where no account is configured this route is absent rather than present and
     // failing. The other four do not depend on it and stay.

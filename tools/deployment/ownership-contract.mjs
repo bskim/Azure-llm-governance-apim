@@ -22,6 +22,10 @@ const schemaVersions = Object.freeze({
   preview: 'llm-governance-removal-preview/v1',
   approval: 'llm-governance-removal-approval/v1',
   authorization: 'llm-governance-removal-authorization/v1',
+  generationInput: 'llm-governance-ownership-generation-input/v1',
+  creationReceipt: 'llm-governance-creation-receipt/v1',
+  authoritativeReadback: 'llm-governance-authoritative-readback/v1',
+  evidenceBundle: 'llm-governance-ownership-evidence-bundle/v1',
 });
 
 const classifications = new Set(['created', 'external-reference', 'protected-preexisting']);
@@ -180,6 +184,141 @@ function isStructurallyProtected(id, protectedTargets) {
   });
 }
 
+function isCreatedTargetProtected(id, protectedTargets, reusableResourceGroupId = null) {
+  const candidate = id.toLowerCase();
+  return protectedTargets.some((target) => {
+    const prefix = target.toLowerCase();
+    if (
+      reusableResourceGroupId !== null
+      && prefix === reusableResourceGroupId.toLowerCase()
+      && candidate !== prefix
+    ) {
+      return false;
+    }
+    return candidate === prefix || candidate.startsWith(`${prefix}/`);
+  });
+}
+
+function assertProtectedRoleAssignmentExceptions(exceptions, name) {
+  const values = requireArray(exceptions, name);
+  const roleIds = new Set();
+  for (const [index, exception] of values.entries()) {
+    const entryName = `${name}[${index}]`;
+    requireObject(exception, entryName);
+    requireOnlyKeys(exception, [
+      'roleAssignmentId',
+      'scope',
+      'principalId',
+      'roleDefinitionId',
+      'principalResourceId',
+    ], entryName);
+    const roleAssignmentId = requireString(exception.roleAssignmentId, `${entryName}.roleAssignmentId`);
+    const scope = requireString(exception.scope, `${entryName}.scope`);
+    requireGuid(exception.principalId, `${entryName}.principalId`);
+    const roleDefinitionId = requireString(exception.roleDefinitionId, `${entryName}.roleDefinitionId`);
+    requireString(exception.principalResourceId, `${entryName}.principalResourceId`);
+    const cognitiveAccountScope =
+      /^\/subscriptions\/[^/]+\/resourceGroups\/[^/]+\/providers\/Microsoft\.CognitiveServices\/accounts\/[^/]+$/i
+        .test(scope);
+    const keyVaultScope =
+      /^\/subscriptions\/[^/]+\/resourceGroups\/[^/]+\/providers\/Microsoft\.KeyVault\/vaults\/[^/]+$/i
+        .test(scope);
+    if (!cognitiveAccountScope && !keyVaultScope) {
+      fail('contract-protected-role-scope-invalid', scope);
+    }
+    const subscriptionId = scope.split('/')[2];
+    const roleDefinitionPattern = new RegExp(
+      `^/subscriptions/${subscriptionId}/providers/Microsoft\\.Authorization/roleDefinitions/[0-9a-f-]+$`,
+      'i',
+    );
+    if (!roleDefinitionPattern.test(roleDefinitionId)) {
+      fail('contract-protected-role-definition-invalid', roleDefinitionId);
+    }
+    requireGuid(
+      roleDefinitionId.slice(roleDefinitionId.lastIndexOf('/') + 1),
+      `${entryName}.roleDefinitionId`,
+    );
+    if (
+      keyVaultScope
+      && !roleDefinitionId.toLowerCase().endsWith(
+        '/providers/microsoft.authorization/roledefinitions/4633458b-17de-408a-b874-0445c86b69e6',
+      )
+    ) {
+      fail('contract-protected-key-vault-role-invalid', roleDefinitionId);
+    }
+    if (!new RegExp(`^${scope.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/providers/Microsoft\\.Authorization/roleAssignments/[0-9a-f-]+$`, 'i')
+      .test(roleAssignmentId)) {
+      fail('contract-protected-role-id-scope-mismatch', roleAssignmentId);
+    }
+    requireGuid(roleAssignmentId.slice(roleAssignmentId.lastIndexOf('/') + 1), `${entryName}.roleAssignmentId`);
+    if (roleIds.has(roleAssignmentId.toLowerCase())) fail('contract-protected-role-exception-duplicate', roleAssignmentId);
+    roleIds.add(roleAssignmentId.toLowerCase());
+  }
+  return values;
+}
+
+function validateProtectedRoleAssignmentExceptions(
+  exceptions,
+  entries,
+  protectedTargets,
+  ownerResourceGroupId,
+  reusableResourceGroupId = null,
+) {
+  const values = assertProtectedRoleAssignmentExceptions(exceptions, 'protectedRoleAssignmentExceptions');
+  const byId = new Map(entries.map((entry) => [entry.id.toLowerCase(), entry]));
+  const exceptionIds = new Set();
+  for (const exception of values) {
+    const roleId = exception.roleAssignmentId.toLowerCase();
+    const scope = exception.scope.toLowerCase();
+    const ownerId = exception.principalResourceId.toLowerCase();
+    if (!protectedTargets.some((target) => target.toLowerCase() === scope)) {
+      fail('contract-protected-role-scope-not-exact-protected-resource', exception.scope);
+    }
+    const role = byId.get(roleId);
+    if (
+      role?.classification !== 'created'
+      || role.kind !== 'azure-role-assignment'
+      || role.type.toLowerCase() !== 'microsoft.authorization/roleassignments'
+      || role.scope.toLowerCase() !== scope
+      || role.principalId !== exception.principalId
+      || role.roleDefinitionId.toLowerCase() !== exception.roleDefinitionId.toLowerCase()
+    ) {
+      fail('contract-protected-role-readback-mismatch', exception.roleAssignmentId);
+    }
+    const owner = byId.get(ownerId);
+    const ownerType = owner?.type?.toLowerCase();
+    const keyVaultScope = /^\/subscriptions\/[^/]+\/resourceGroups\/[^/]+\/providers\/Microsoft\.KeyVault\/vaults\/[^/]+$/i
+      .test(exception.scope);
+    const ownerResourceKinds = typeof owner?.resourceKind === 'string'
+      ? owner.resourceKind.split(',').map((value) => value.trim().toLowerCase()).filter(Boolean)
+      : [];
+    if (
+      owner?.classification !== 'created'
+      || owner.kind !== 'azure-resource'
+      || (
+        keyVaultScope
+          ? ownerType !== 'microsoft.web/sites' || !ownerResourceKinds.includes('functionapp')
+          : !['microsoft.web/sites', 'microsoft.apimanagement/service'].includes(ownerType)
+      )
+      || owner.principalId !== exception.principalId
+      || !owner.id.toLowerCase().startsWith(`${ownerResourceGroupId.toLowerCase()}/providers/`)
+      || isCreatedTargetProtected(owner.id, protectedTargets, reusableResourceGroupId)
+    ) {
+      fail('contract-protected-role-owner-invalid', exception.principalResourceId);
+    }
+    exceptionIds.add(roleId);
+  }
+  for (const entry of entries.filter((candidateEntry) => candidateEntry.classification === 'created')) {
+    if (
+      isCreatedTargetProtected(entry.id, protectedTargets, reusableResourceGroupId)
+      && !exceptionIds.has(entry.id.toLowerCase())
+    ) {
+      fail('contract-created-target-is-protected', entry.id);
+    }
+  }
+  return values;
+}
+
 function assertCreation(creation, name, expectedOperationId) {
   requireObject(creation, name);
   requireOnlyKeys(creation, ['operationId', 'deploymentId', 'correlationId', 'receiptDigest'], name);
@@ -208,6 +347,7 @@ function assertEntry(entry, index, operationId, allowLifecycle) {
     'resourceId',
     'appRoleId',
     'roleDefinitionId',
+    'resourceKind',
     'purgeProtectionEnabled',
     'softDeleteRetentionInDays',
     'lifecycleState',
@@ -225,6 +365,7 @@ function assertEntry(entry, index, operationId, allowLifecycle) {
   if (!entryKinds.has(entry.kind)) fail('contract-entry-kind-invalid', name);
   requireString(entry.type, `${name}.type`);
   requireString(entry.scope, `${name}.scope`);
+  if (entry.resourceKind !== undefined) requireString(entry.resourceKind, `${name}.resourceKind`);
   if (!classifications.has(entry.classification)) fail('contract-classification-invalid', name);
 
   if (entry.classification === 'created' && !allowLifecycle) {
@@ -527,6 +668,8 @@ export function sealManifest(candidate) {
     'evidence',
     'protectedTargets',
     'protectedTargetsDigest',
+    'protectedRoleAssignmentExceptions',
+    'protectedRoleAssignmentExceptionsDigest',
   ], 'candidate');
   if (candidate.schemaVersion !== schemaVersions.candidate) fail('candidate-schema-version-invalid');
   if (!Number.isSafeInteger(candidate.manifestVersion) || candidate.manifestVersion < 1) {
@@ -550,16 +693,38 @@ export function sealManifest(candidate) {
   requireString(header.createdAt, 'header.createdAt');
 
   const entries = assertInventory(candidate.inventory, header.creationOperationId, false);
-  if (!entries.some((entry) => entry.classification === 'created' && entry.id === header.identity.resourceGroupId)) {
-    fail('manifest-resource-group-creation-missing');
+  const resourceGroup = entries.find((entry) => entry.id === header.identity.resourceGroupId);
+  if (!resourceGroup) fail('manifest-resource-group-evidence-missing');
+  if (
+    resourceGroup.classification !== 'created'
+    && (
+      resourceGroup.classification !== 'protected-preexisting'
+      || !isStructurallyProtected(resourceGroup.id, candidate.protectedTargets)
+    )
+  ) {
+    fail('manifest-resource-group-ownership-invalid');
   }
   assertEvidence(candidate.evidence, 'evidence');
   const protectedTargets = assertProtectedTargets(candidate.protectedTargets, 'protectedTargets');
   if (candidate.protectedTargetsDigest !== digest(protectedTargets)) fail('manifest-protected-digest-mismatch');
-  for (const entry of entries.filter((candidateEntry) => candidateEntry.classification === 'created')) {
-    if (isStructurallyProtected(entry.id, protectedTargets)) {
-      fail('contract-created-target-is-protected', entry.id);
-    }
+  const reusableResourceGroupId = resourceGroup.classification === 'protected-preexisting'
+    ? header.identity.resourceGroupId
+    : null;
+  const protectedRoleAssignmentExceptions = candidate.protectedRoleAssignmentExceptions ?? [];
+  validateProtectedRoleAssignmentExceptions(
+    protectedRoleAssignmentExceptions,
+    entries,
+    protectedTargets,
+    header.identity.resourceGroupId,
+    reusableResourceGroupId,
+  );
+  if (protectedRoleAssignmentExceptions.length > 0
+    && candidate.protectedRoleAssignmentExceptionsDigest !== digest(protectedRoleAssignmentExceptions)) {
+    fail('manifest-protected-role-exceptions-digest-mismatch');
+  }
+  if (protectedRoleAssignmentExceptions.length === 0
+    && candidate.protectedRoleAssignmentExceptionsDigest !== undefined) {
+    fail('manifest-protected-role-exceptions-unexpected-digest');
   }
 
   const manifest = {
@@ -580,10 +745,28 @@ export function verifyManifest(manifest) {
   assertProtectedTargets(manifest.protectedTargets, 'manifest.protectedTargets');
   if (manifest.protectedTargetsDigest !== digest(manifest.protectedTargets)) fail('manifest-protected-digest-mismatch');
   assertInventory(manifest.inventory, manifest.header.creationOperationId, false);
-  for (const entry of manifest.inventory.entries.filter((candidateEntry) => candidateEntry.classification === 'created')) {
-    if (isStructurallyProtected(entry.id, manifest.protectedTargets)) {
-      fail('contract-created-target-is-protected', entry.id);
-    }
+  const reusableResourceGroupId = manifest.inventory.entries.some(
+    (entry) =>
+      entry.id === manifest.header.identity.resourceGroupId
+      && entry.classification === 'protected-preexisting',
+  )
+    ? manifest.header.identity.resourceGroupId
+    : null;
+  const protectedRoleAssignmentExceptions = manifest.protectedRoleAssignmentExceptions ?? [];
+  validateProtectedRoleAssignmentExceptions(
+    protectedRoleAssignmentExceptions,
+    manifest.inventory.entries,
+    manifest.protectedTargets,
+    manifest.header.identity.resourceGroupId,
+    reusableResourceGroupId,
+  );
+  if (protectedRoleAssignmentExceptions.length > 0
+    && manifest.protectedRoleAssignmentExceptionsDigest !== digest(protectedRoleAssignmentExceptions)) {
+    fail('manifest-protected-role-exceptions-digest-mismatch');
+  }
+  if (protectedRoleAssignmentExceptions.length === 0
+    && manifest.protectedRoleAssignmentExceptionsDigest !== undefined) {
+    fail('manifest-protected-role-exceptions-unexpected-digest');
   }
   assertEvidence(manifest.evidence, 'manifest.evidence');
   assertCanonicalDigest(manifest, 'manifest');
@@ -599,6 +782,7 @@ function verifyState(manifest, state) {
     'manifestDigest',
     'approvedPlanDigest',
     'inventoryDigest',
+    'protectedRoleAssignmentExceptionsDigest',
     'entries',
     'deletedEntryIds',
     'canonicalDigest',
@@ -608,6 +792,9 @@ function verifyState(manifest, state) {
   if (state.manifestVersion !== manifest.manifestVersion) fail('state-manifest-version-mismatch');
   if (state.manifestDigest !== manifest.canonicalDigest) fail('state-manifest-digest-mismatch');
   if (state.approvedPlanDigest !== manifest.evidence.approvedPlanDigest) fail('state-plan-digest-mismatch');
+  if (state.protectedRoleAssignmentExceptionsDigest !== manifest.protectedRoleAssignmentExceptionsDigest) {
+    fail('state-protected-role-exceptions-digest-mismatch');
+  }
   const stateEntries = requireArray(state.entries, 'state.entries').map(entryIdentity);
   const manifestEntries = manifest.inventory.entries.map(entryIdentity);
   if (canonicalJson(stateEntries) !== canonicalJson(manifestEntries)) fail('state-inventory-mismatch');
@@ -628,6 +815,7 @@ function verifyReadback(manifest, readback, deletedEntryIds) {
     'manifestDigest',
     'approvedPlanDigest',
     'protectedTargetsDigest',
+    'protectedRoleAssignmentExceptionsDigest',
     'observedAt',
     'entries',
     'canonicalDigest',
@@ -638,6 +826,9 @@ function verifyReadback(manifest, readback, deletedEntryIds) {
   if (readback.manifestDigest !== manifest.canonicalDigest) fail('readback-manifest-digest-mismatch');
   if (readback.approvedPlanDigest !== manifest.evidence.approvedPlanDigest) fail('readback-plan-digest-mismatch');
   if (readback.protectedTargetsDigest !== manifest.protectedTargetsDigest) fail('readback-protected-digest-mismatch');
+  if (readback.protectedRoleAssignmentExceptionsDigest !== manifest.protectedRoleAssignmentExceptionsDigest) {
+    fail('readback-protected-role-exceptions-digest-mismatch');
+  }
   requireString(readback.observedAt, 'readback.observedAt');
 
   const inventory = { entries: requireArray(readback.entries, 'readback.entries') };
@@ -718,6 +909,9 @@ export function createRemovalPreview(manifestInput, state, readback, now = new D
       maximumAgeSeconds: readbackMaximumAgeSeconds,
     },
     protectedTargetsDigest: manifest.protectedTargetsDigest,
+    ...(manifest.protectedRoleAssignmentExceptionsDigest
+      ? { protectedRoleAssignmentExceptionsDigest: manifest.protectedRoleAssignmentExceptionsDigest }
+      : {}),
     status: agreement.missing.length || agreement.unknown.length || agreement.blocked.length ? 'blocked' : 'ready',
     delete: {
       resources: targets.resourceDelete,
@@ -891,6 +1085,482 @@ export function validateApproval(preview, approval, now = new Date()) {
   };
   authorization.canonicalDigest = digest(authorization);
   return normalized(authorization);
+}
+
+function normalizedDirectoryId(entry) {
+  const objectId = requireString(entry.objectId, 'outputSeed.createdDirectoryObjects[].objectId');
+  if (objectId.startsWith('/providers/Microsoft.Graph/')) return objectId;
+  const collection = entry.kind === 'entra-application' ? 'applications' : 'servicePrincipals';
+  return `/providers/Microsoft.Graph/${collection}/${objectId}`;
+}
+
+function assertGenerationInput(input) {
+  requireObject(input, 'generationInput');
+  requireOnlyKeys(input, [
+    'schemaVersion',
+    'deploymentInputs',
+    'outputSeed',
+    'creationReceipts',
+    'authoritativeReadback',
+    'canonicalDigest',
+  ], 'generationInput');
+  if (input.schemaVersion !== schemaVersions.generationInput) fail('generation-input-schema-version-invalid');
+  assertCanonicalDigest(input, 'generationInput');
+
+  const deployment = requireObject(input.deploymentInputs, 'deploymentInputs');
+  requireOnlyKeys(deployment, [
+    'identity',
+    'sourceCommit',
+    'artifactDigest',
+    'approvedPlanDigest',
+    'previewDigest',
+    'creationOperationId',
+    'deploymentNames',
+    'createdAt',
+    'preexistingResourceIds',
+    'protectedTargets',
+    'protectedRoleAssignmentExceptions',
+  ], 'deploymentInputs');
+  assertIdentity(deployment.identity, 'deploymentInputs.identity');
+  requireCommit(deployment.sourceCommit, 'deploymentInputs.sourceCommit');
+  requireDigest(deployment.artifactDigest, 'deploymentInputs.artifactDigest');
+  requireDigest(deployment.approvedPlanDigest, 'deploymentInputs.approvedPlanDigest');
+  requireDigest(deployment.previewDigest, 'deploymentInputs.previewDigest');
+  requireString(deployment.creationOperationId, 'deploymentInputs.creationOperationId');
+  const deploymentNames = assertStringSet(deployment.deploymentNames, 'deploymentInputs.deploymentNames');
+  requireTimestamp(deployment.createdAt, 'deploymentInputs.createdAt');
+  const preexistingResourceIds = assertStringSet(
+    deployment.preexistingResourceIds,
+    'deploymentInputs.preexistingResourceIds',
+  );
+  const protectedTargets = assertProtectedTargets(
+    deployment.protectedTargets,
+    'deploymentInputs.protectedTargets',
+  );
+  const protectedRoleAssignmentExceptions = assertProtectedRoleAssignmentExceptions(
+    deployment.protectedRoleAssignmentExceptions ?? [],
+    'deploymentInputs.protectedRoleAssignmentExceptions',
+  );
+  for (const id of preexistingResourceIds) {
+    if (!isStructurallyProtected(id, protectedTargets)) {
+      fail('generation-preexisting-not-protected', id);
+    }
+  }
+
+  const seed = requireObject(input.outputSeed, 'outputSeed');
+  const keyVaultLifecycle = requireObject(seed.keyVaultLifecycle, 'outputSeed.keyVaultLifecycle');
+  const bootstrapSeed = Object.hasOwn(keyVaultLifecycle, 'resourceId');
+  requireOnlyKeys(seed, [
+    'schemaVersion',
+    'identity',
+    'createdResourceIds',
+    'externalReferences',
+    'keyVaultLifecycle',
+    'requiresCreationReceipts',
+    'requiresExactReadback',
+    ...(bootstrapSeed ? [] : [
+      'createdAzureRoleAssignmentIds',
+      'createdDirectoryObjects',
+      'createdGraphAssignmentIds',
+      'protectedResourceIds',
+      'bootstrapManifestRequired',
+      'requiresRecursiveApimReadback',
+    ]),
+  ], 'outputSeed');
+  if (seed.schemaVersion !== 'llm-governance-bicep-ownership-seed/v1') {
+    fail('generation-output-seed-schema-version-invalid');
+  }
+  assertIdentity(seed.identity, 'outputSeed.identity', deployment.identity);
+  if (seed.requiresCreationReceipts !== true || seed.requiresExactReadback !== true) {
+    fail('generation-output-seed-evidence-requirements-invalid');
+  }
+  requireOnlyKeys(keyVaultLifecycle, [
+    'purgeProtectionEnabled',
+    'softDeleteRetentionInDays',
+    'deletionDisposition',
+    ...(bootstrapSeed ? ['resourceId'] : ['referencedResourceIds', 'ownershipResolution']),
+  ], 'outputSeed.keyVaultLifecycle');
+  if (typeof keyVaultLifecycle.purgeProtectionEnabled !== 'boolean'
+    && keyVaultLifecycle.purgeProtectionEnabled !== null) {
+    fail('generation-key-vault-purge-protection-invalid');
+  }
+  if (!Number.isSafeInteger(keyVaultLifecycle.softDeleteRetentionInDays)
+    && keyVaultLifecycle.softDeleteRetentionInDays !== null) {
+    fail('generation-key-vault-retention-invalid');
+  }
+  requireString(keyVaultLifecycle.deletionDisposition, 'outputSeed.keyVaultLifecycle.deletionDisposition');
+  if (bootstrapSeed) {
+    requireString(keyVaultLifecycle.resourceId, 'outputSeed.keyVaultLifecycle.resourceId');
+  } else {
+    assertStringSet(
+      keyVaultLifecycle.referencedResourceIds,
+      'outputSeed.keyVaultLifecycle.referencedResourceIds',
+    );
+    requireString(keyVaultLifecycle.ownershipResolution, 'outputSeed.keyVaultLifecycle.ownershipResolution');
+  }
+  const claimedKinds = new Map();
+  const claimCreated = (id, kind) => {
+    if (claimedKinds.has(id) && claimedKinds.get(id) !== kind) {
+      fail('generation-created-kind-conflict', id);
+    }
+    claimedKinds.set(id, kind);
+  };
+  const azureRoleAssignmentIds = new Set(assertStringSet(
+    bootstrapSeed ? [] : seed.createdAzureRoleAssignmentIds,
+    'outputSeed.createdAzureRoleAssignmentIds',
+  ));
+  // The main seed's resource inventory includes its more specifically typed grants.
+  for (const id of assertStringSet(seed.createdResourceIds, 'outputSeed.createdResourceIds')) {
+    claimCreated(id, azureRoleAssignmentIds.has(id) ? 'azure-role-assignment' : 'azure-resource');
+  }
+  for (const id of azureRoleAssignmentIds) {
+    claimCreated(id, 'azure-role-assignment');
+  }
+  for (const id of assertStringSet(
+    bootstrapSeed ? [] : seed.createdGraphAssignmentIds,
+    'outputSeed.createdGraphAssignmentIds',
+  )) {
+    claimCreated(id, 'graph-assignment');
+  }
+  const directoryById = new Map();
+  for (const [index, entry] of requireArray(
+    bootstrapSeed ? [] : seed.createdDirectoryObjects,
+    'outputSeed.createdDirectoryObjects',
+  ).entries()) {
+    requireObject(entry, `outputSeed.createdDirectoryObjects[${index}]`);
+    requireOnlyKeys(
+      entry,
+      ['kind', 'objectId', 'appId', 'applicationObjectId'],
+      `outputSeed.createdDirectoryObjects[${index}]`,
+    );
+    if (!['entra-application', 'entra-service-principal'].includes(entry.kind)) {
+      fail('generation-directory-kind-invalid', entry.kind);
+    }
+    requireGuid(entry.appId, `outputSeed.createdDirectoryObjects[${index}].appId`);
+    if (entry.kind === 'entra-service-principal') {
+      requireString(
+        entry.applicationObjectId,
+        `outputSeed.createdDirectoryObjects[${index}].applicationObjectId`,
+      );
+    }
+    const id = normalizedDirectoryId(entry);
+    claimCreated(id, entry.kind);
+    directoryById.set(id, {
+      objectId: id,
+      appId: entry.appId,
+      ...(entry.applicationObjectId
+        ? {
+            applicationObjectId: entry.applicationObjectId.startsWith('/providers/Microsoft.Graph/')
+              ? entry.applicationObjectId
+              : `/providers/Microsoft.Graph/applications/${entry.applicationObjectId}`,
+          }
+        : {}),
+    });
+  }
+  const createdClaims = new Set(claimedKinds.keys());
+  const externalIds = new Set(requireArray(seed.externalReferences, 'outputSeed.externalReferences')
+    .map((entry, index) => {
+      requireObject(entry, `outputSeed.externalReferences[${index}]`);
+      requireOnlyKeys(entry, ['id', 'classification'], `outputSeed.externalReferences[${index}]`);
+      if (entry.classification !== 'external-reference') {
+        fail('generation-external-classification-invalid', entry.id);
+      }
+      return requireString(entry.id, `outputSeed.externalReferences[${index}].id`);
+    }));
+  const protectedResourceIds = assertStringSet(
+    bootstrapSeed ? [] : seed.protectedResourceIds,
+    'outputSeed.protectedResourceIds',
+  );
+  for (const id of protectedResourceIds) {
+    if (!isStructurallyProtected(id, protectedTargets)) {
+      fail('generation-output-protected-target-missing', id);
+    }
+  }
+  for (const id of createdClaims) {
+    if (externalIds.has(id)) fail('generation-classification-conflict', id);
+  }
+
+  const receiptById = new Map();
+  for (const [index, receipt] of requireArray(input.creationReceipts, 'creationReceipts').entries()) {
+    const name = `creationReceipts[${index}]`;
+    requireObject(receipt, name);
+    requireOnlyKeys(receipt, [
+      'schemaVersion',
+      'operationId',
+      'deploymentId',
+      'correlationId',
+      'observedAt',
+      'createdResourceIds',
+      'canonicalDigest',
+    ], name);
+    if (receipt.schemaVersion !== schemaVersions.creationReceipt) {
+      fail('generation-receipt-schema-version-invalid', name);
+    }
+    if (receipt.operationId !== deployment.creationOperationId) {
+      fail('generation-receipt-operation-mismatch', name);
+    }
+    const deploymentId = requireString(receipt.deploymentId, `${name}.deploymentId`);
+    if (!deploymentNames.some(
+      (deploymentName) => deploymentId.toLowerCase().endsWith(`/deployments/${deploymentName}`.toLowerCase()),
+    )) {
+      fail('generation-receipt-deployment-mismatch', deploymentId);
+    }
+    requireString(receipt.correlationId, `${name}.correlationId`);
+    requireTimestamp(receipt.observedAt, `${name}.observedAt`);
+    assertCanonicalDigest(receipt, name);
+    for (const id of assertStringSet(receipt.createdResourceIds, `${name}.createdResourceIds`)) {
+      if (receiptById.has(id)) fail('generation-receipt-id-duplicate', id);
+      if (!createdClaims.has(id)) fail('generation-receipt-id-unexpected', id);
+      receiptById.set(id, receipt);
+    }
+  }
+
+  const authoritative = requireObject(input.authoritativeReadback, 'authoritativeReadback');
+  requireOnlyKeys(authoritative, [
+    'schemaVersion',
+    'identity',
+    'observedAt',
+    'entries',
+    'canonicalDigest',
+  ], 'authoritativeReadback');
+  if (authoritative.schemaVersion !== schemaVersions.authoritativeReadback) {
+    fail('generation-readback-schema-version-invalid');
+  }
+  assertIdentity(authoritative.identity, 'authoritativeReadback.identity', deployment.identity);
+  requireTimestamp(authoritative.observedAt, 'authoritativeReadback.observedAt');
+  assertCanonicalDigest(authoritative, 'authoritativeReadback');
+
+  const expectedIds = new Set([...createdClaims, ...externalIds, ...preexistingResourceIds]);
+  const sourceEntries = requireArray(authoritative.entries, 'authoritativeReadback.entries');
+  const readbackIds = sourceEntries.map((entry, index) => {
+    requireObject(entry, `authoritativeReadback.entries[${index}]`);
+    requireOnlyKeys(entry, [
+      'id',
+      'kind',
+      'type',
+      'scope',
+      'objectId',
+      'appId',
+      'applicationObjectId',
+      'principalId',
+      'resourceId',
+      'appRoleId',
+      'roleDefinitionId',
+      'resourceKind',
+      'purgeProtectionEnabled',
+      'softDeleteRetentionInDays',
+      'lifecycleState',
+    ], `authoritativeReadback.entries[${index}]`);
+    if (entry.lifecycleState !== 'present') fail('generation-readback-entry-not-present', entry.id);
+    return requireString(entry.id, `authoritativeReadback.entries[${index}].id`);
+  });
+  if (new Set(readbackIds).size !== readbackIds.length) fail('generation-readback-id-duplicate');
+  for (const id of expectedIds) {
+    if (!readbackIds.includes(id)) fail('generation-readback-id-missing', id);
+  }
+  for (const id of readbackIds) {
+    if (!expectedIds.has(id)) fail('generation-readback-id-unexpected', id);
+  }
+  if (bootstrapSeed) {
+    const vault = sourceEntries.find((entry) => entry.id === keyVaultLifecycle.resourceId);
+    if (!createdClaims.has(keyVaultLifecycle.resourceId)
+      || vault?.type?.toLowerCase() !== 'microsoft.keyvault/vaults') {
+      fail('generation-key-vault-resource-id-mismatch', keyVaultLifecycle.resourceId);
+    }
+  }
+  for (const entry of sourceEntries) {
+    const expectedKind = claimedKinds.get(entry.id);
+    if (expectedKind !== undefined && entry.kind !== expectedKind) {
+      fail('generation-created-kind-mismatch', entry.id);
+    }
+    const expectedDirectory = directoryById.get(entry.id);
+    if (expectedDirectory !== undefined) {
+      for (const [field, expected] of Object.entries(expectedDirectory)) {
+        if (entry[field] !== expected) fail('generation-directory-identity-mismatch', entry.id);
+      }
+    }
+    if (
+      entry.type?.toLowerCase() === 'microsoft.keyvault/vaults'
+      && claimedKinds.has(entry.id)
+      && !preexistingResourceIds.includes(entry.id)
+      && (
+        entry.purgeProtectionEnabled !== keyVaultLifecycle.purgeProtectionEnabled
+        || entry.softDeleteRetentionInDays !== keyVaultLifecycle.softDeleteRetentionInDays
+      )
+    ) {
+      fail('generation-key-vault-readback-mismatch', entry.id);
+    }
+  }
+
+  for (const id of createdClaims) {
+    if (preexistingResourceIds.includes(id)) continue;
+    if (!receiptById.has(id)) fail('generation-creation-receipt-missing', id);
+  }
+  return {
+    deployment,
+    seed,
+    createdClaims,
+    externalIds,
+    preexistingResourceIds: new Set(preexistingResourceIds),
+    protectedTargets,
+    protectedRoleAssignmentExceptions,
+    receiptById,
+    sourceEntries,
+    deploymentNames,
+  };
+}
+
+function generatedEntry(source, classification, creation = null) {
+  const entry = structuredClone(source);
+  delete entry.lifecycleState;
+  entry.classification = classification;
+  if (creation !== null) {
+    entry.creation = {
+      operationId: creation.operationId,
+      deploymentId: creation.deploymentId,
+      correlationId: creation.correlationId,
+      receiptDigest: creation.canonicalDigest,
+    };
+  }
+  return entry;
+}
+
+/**
+ * Turns deployment-declared IDs into ownership only when an exact-ID creation receipt
+ * and an authoritative readback agree. It performs no cloud calls and no mutation.
+ */
+export function generateOwnershipEvidence(input, now = new Date()) {
+  const validated = assertGenerationInput(input);
+  const {
+    deployment,
+    externalIds,
+    preexistingResourceIds,
+    protectedTargets,
+    protectedRoleAssignmentExceptions,
+    receiptById,
+    sourceEntries,
+    deploymentNames,
+  } = validated;
+  const entries = sourceEntries.map((source) => {
+    if (preexistingResourceIds.has(source.id)) {
+      return generatedEntry(source, 'protected-preexisting');
+    }
+    if (externalIds.has(source.id)) return generatedEntry(source, 'external-reference');
+    const receipt = receiptById.get(source.id);
+    if (!receipt) fail('generation-creation-receipt-missing', source.id);
+    const reusableResourceGroupId = preexistingResourceIds.has(deployment.identity.resourceGroupId)
+      ? deployment.identity.resourceGroupId
+      : null;
+    const protectedByDefault = isCreatedTargetProtected(source.id, protectedTargets, reusableResourceGroupId);
+    if (protectedByDefault && !protectedRoleAssignmentExceptions.some(
+      (exception) => exception.roleAssignmentId.toLowerCase() === source.id.toLowerCase(),
+    )) {
+      fail('generation-created-target-is-protected', source.id);
+    }
+    return generatedEntry(source, 'created', receipt);
+  });
+
+  const candidate = {
+    schemaVersion: schemaVersions.candidate,
+    manifestVersion: 1,
+    header: {
+      identity: deployment.identity,
+      sourceCommit: deployment.sourceCommit,
+      artifactDigest: deployment.artifactDigest,
+      creationOperationId: deployment.creationOperationId,
+      deploymentNames,
+      createdAt: deployment.createdAt,
+    },
+    inventory: { entries },
+    evidence: {
+      approvedPlanDigest: deployment.approvedPlanDigest,
+      previewDigest: deployment.previewDigest,
+      readbackDigest: input.authoritativeReadback.canonicalDigest,
+    },
+    protectedTargets,
+    protectedTargetsDigest: digest(protectedTargets),
+    ...(protectedRoleAssignmentExceptions.length > 0 ? {
+      protectedRoleAssignmentExceptions,
+      protectedRoleAssignmentExceptionsDigest: digest(protectedRoleAssignmentExceptions),
+    } : {}),
+  };
+  const manifest = sealManifest(candidate);
+  const stateEntries = manifest.inventory.entries.map(entryIdentity);
+  const state = {
+    schemaVersion: schemaVersions.state,
+    identity: manifest.header.identity,
+    manifestVersion: manifest.manifestVersion,
+    manifestDigest: manifest.canonicalDigest,
+    approvedPlanDigest: manifest.evidence.approvedPlanDigest,
+    inventoryDigest: digest(stateEntries),
+    ...(manifest.protectedRoleAssignmentExceptionsDigest
+      ? { protectedRoleAssignmentExceptionsDigest: manifest.protectedRoleAssignmentExceptionsDigest }
+      : {}),
+    entries: stateEntries,
+    deletedEntryIds: [],
+  };
+  state.canonicalDigest = digest(state);
+
+  const byId = new Map(sourceEntries.map((entry) => [entry.id, entry]));
+  const readback = {
+    schemaVersion: schemaVersions.readback,
+    identity: manifest.header.identity,
+    manifestVersion: manifest.manifestVersion,
+    manifestDigest: manifest.canonicalDigest,
+    approvedPlanDigest: manifest.evidence.approvedPlanDigest,
+    protectedTargetsDigest: manifest.protectedTargetsDigest,
+    ...(manifest.protectedRoleAssignmentExceptionsDigest
+      ? { protectedRoleAssignmentExceptionsDigest: manifest.protectedRoleAssignmentExceptionsDigest }
+      : {}),
+    observedAt: input.authoritativeReadback.observedAt,
+    entries: manifest.inventory.entries.map((entry) => ({
+      ...entryIdentity(entry),
+      lifecycleState: byId.get(entry.id).lifecycleState,
+      ...(entry.classification === 'created' ? {} : { unchanged: true }),
+    })),
+  };
+  readback.canonicalDigest = digest(readback);
+  const preview = createRemovalPreview(manifest, state, readback, now);
+  const bundle = {
+    schemaVersion: schemaVersions.evidenceBundle,
+    generationInputDigest: input.canonicalDigest,
+    generationInput: structuredClone(input),
+    candidate,
+    manifest,
+    state,
+    readback,
+    preview,
+  };
+  bundle.canonicalDigest = digest(bundle);
+  return normalized(bundle);
+}
+
+export function verifyOwnershipEvidenceBundle(bundle, now = new Date()) {
+  requireObject(bundle, 'evidenceBundle');
+  requireOnlyKeys(bundle, [
+    'schemaVersion',
+    'generationInputDigest',
+    'generationInput',
+    'candidate',
+    'manifest',
+    'state',
+    'readback',
+    'preview',
+    'canonicalDigest',
+  ], 'evidenceBundle');
+  if (bundle.schemaVersion !== schemaVersions.evidenceBundle) {
+    fail('evidence-bundle-schema-version-invalid');
+  }
+  requireDigest(bundle.generationInputDigest, 'evidenceBundle.generationInputDigest');
+  assertCanonicalDigest(bundle, 'evidenceBundle');
+  if (bundle.generationInput?.canonicalDigest !== bundle.generationInputDigest) {
+    fail('evidence-bundle-generation-input-mismatch');
+  }
+  const regenerated = generateOwnershipEvidence(bundle.generationInput, now);
+  if (canonicalJson(regenerated) !== canonicalJson(bundle)) {
+    fail('evidence-bundle-regeneration-mismatch');
+  }
+  return bundle;
 }
 
 function readJson(path, name) {
@@ -1133,6 +1803,23 @@ function main(argv) {
   }
   if (command === 'seal') {
     writeJson(options.output, sealManifest(readJson(options.candidate, 'candidate')));
+    return;
+  }
+  if (command === 'generate') {
+    writeJson(options.output, generateOwnershipEvidence(readJson(options.input, 'generationInput')));
+    return;
+  }
+  if (command === 'generate-if-configured') {
+    const inputPath = process.env.OWNERSHIP_GENERATION_INPUT_FILE?.trim();
+    const outputPath = process.env.OWNERSHIP_EVIDENCE_BUNDLE_FILE?.trim();
+    if (!inputPath && !outputPath) return;
+    if (!inputPath || !outputPath) fail('generation-environment-incomplete');
+    writeJson(outputPath, generateOwnershipEvidence(readJson(inputPath, 'generationInput')));
+    return;
+  }
+  if (command === 'preview-bundle') {
+    const bundle = verifyOwnershipEvidenceBundle(readJson(options.bundle, 'evidenceBundle'));
+    writeJson(options.output, bundle.preview);
     return;
   }
   if (command === 'validate-preflight') {

@@ -367,3 +367,28 @@ test('a period that went past its cap says by how much, and a gap makes that a f
   assert.equal(partial.exceededByTokens, 12_000);
   assert.equal(partial.remainingTokens, null);
 });
+
+test('consumption distinguishes requested budget version from observed policy evidence', () => {
+  const model = projectBudgets({
+    authorization: authorization(['self', 'team', 'global'], ['developer-experience']),
+    publication: publication([budget()]),
+    selection: { scope: 'global', teamKey: null, generatedAt: evaluationTime },
+    freshness: { state: 'fresh', reportedAt: evaluationTime, lagSeconds: 300 },
+    observations: [{
+      scope: 'organization', scopeKey: null, budgetId: 'budget-org', budgetVersion: 1,
+      period: 'Monthly', modelScope: 'all-models', consumedTokens: 10, completeness: 'partial',
+      completenessReason: 'window-missing', windowsCovered: 2, windowsMissing: 1,
+      requestedWindow: { start: '2026-08-01T00:00:00.000Z', end: '2026-08-02T00:00:00.000Z' },
+      latestClosedWindow: { start: '2026-08-01T01:00:00.000Z', end: '2026-08-01T02:00:00.000Z' },
+      coveredWindows: [{ start: '2026-08-01T00:00:00.000Z', end: '2026-08-01T01:00:00.000Z' }],
+      missingWindows: ['2026-08-01T02:00:00.000Z'],
+      policyVersionEvidence: { state: 'changed', value: null },
+    }],
+  });
+  const { consumption } = model.records[0];
+  assert.equal(consumption.remainingTokens, null);
+  assert.equal(consumption.observation.requestedBudgetVersion, 1);
+  assert.equal(consumption.observation.policyVersionEvidence.state, 'not-collected');
+  assert.equal(consumption.observation.counterIdentityEvidence.state, 'not-collected');
+  assert.equal(consumption.observation.missingWindows.length, 1);
+});

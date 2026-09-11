@@ -19,6 +19,7 @@ import { DEPLOYED_THROTTLE_TIER_CODES } from '../../control-api/throttle-tier-co
 import {
   ASSIGNMENT_GRANT_RULES,
 } from '../../governance-domain/authorization/assignment-edit.mjs';
+import { buildIdentifierEvidence } from '../../control-api/identifier-assistance.mjs';
 
 /**
  * Changing who may use which model, from inside the network.
@@ -110,6 +111,7 @@ export function createAccessOptionsHandler({
   expectedAudience,
   roleMapping = ENTRA_ROLE_MAPPING,
   rolesClaim,
+  deriver = null,
 } = {}) {
   assertDependencies({ readPublishedSnapshots, clock, expectedAudience });
 
@@ -117,7 +119,7 @@ export function createAccessOptionsHandler({
     const requestId = context?.invocationId;
     // The options name real identifiers rather than the pseudonymous codes the
     // directory table is built from, so reading them is gated as an authoring act.
-    const { failure } = authorize({
+    const { failure, caller } = authorize({
       request,
       expectedAudience,
       rolesClaim,
@@ -142,6 +144,11 @@ export function createAccessOptionsHandler({
       {
         readModelVersion: 'access-options.v1',
         generatedAt: clock.nowIso(),
+        identifierEvidence: buildIdentifierEvidence({
+          identity: caller,
+          deriver,
+          snapshots,
+        }),
         models: snapshots.modelRegistrySnapshot.models.map((model) => model.modelKey),
         budgetOptions: { throttleTierCodes: [...DEPLOYED_THROTTLE_TIER_CODES] },
         // Which directory group is which governed team. A team is offered with the

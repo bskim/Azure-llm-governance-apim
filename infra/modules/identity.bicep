@@ -169,9 +169,11 @@ resource adminSpaApplication 'Microsoft.Graph/applications@v1.0' = {
   spa: {
     redirectUris: union([adminConsoleOrigin], [adminConsoleDevelopmentOrigin])
   }
+  // Entra ignores localhost ports when matching redirects. A distinct native
+  // path prevents the initializer and local SPA from selecting each other's flow.
   publicClient: {
     redirectUris: [
-      'http://localhost'
+      'http://localhost/governance-bootstrap'
     ]
   }
   owners: {
@@ -192,6 +194,8 @@ resource adminApiApplication 'Microsoft.Graph/applications@v1.0' = {
   uniqueName: adminApiUniqueName
   description: 'Single-tenant resource API for governance administration and reporting.'
   signInAudience: 'AzureADMyOrg'
+  // Preview needs the caller's governed memberships, not just groups assigned admin roles.
+  groupMembershipClaims: 'SecurityGroup'
   identifierUris: [
     adminApiIdentifierUri
   ]

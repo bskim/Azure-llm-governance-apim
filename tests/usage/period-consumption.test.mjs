@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { observePeriodConsumption } from '../../app/governance-domain/usage/period-consumption.mjs';
+import { getLocalRollups } from '../../app/local-adapters/rollup-fixtures.mjs';
+import { assertUsageRollupDocument } from '../../app/governance-domain/usage/usage-rollup-validator.mjs';
 
 const PERIOD_START = '2026-08-10T00:00:00.000Z';
 const PERIOD_END = '2026-08-10T04:00:00.000Z';
@@ -44,6 +46,11 @@ test('a complete period sums every window it covers', () => {
   assert.equal(observation.consumedTokens, 400);
   assert.equal(observation.completeness, 'complete');
   assert.equal(observation.windowsCovered, 4);
+  assert.deepEqual(observation.requestedWindow, { start: PERIOD_START, end: PERIOD_END });
+  assert.equal(observation.latestClosedWindow.end, PERIOD_END);
+  assert.equal(observation.coveredWindows.length, 4);
+  assert.deepEqual(observation.missingWindows, []);
+  assert.deepEqual(observation.policyVersionEvidence, { state: 'not-collected', value: null, reasonCode: 'usage-rollup-policy-version-not-collected' });
 });
 
 test('a period missing a window is partial, not a smaller complete total', () => {
@@ -55,6 +62,80 @@ test('a period missing a window is partial, not a smaller complete total', () =>
   assert.equal(observation.completenessReason, 'window-missing');
   assert.equal(observation.windowsMissing, 1);
   assert.equal(observation.consumedTokens, 300, 'what was measured is still reported');
+  assert.deepEqual(observation.missingWindows, ['2026-08-10T02:00:00.000Z']);
+});
+
+test('unrecorded policyVersion extensions are not treated as applied-policy evidence', () => {
+  const stable = hours(4).map((window) => ({ ...window, policyVersion: 7 }));
+  assert.deepEqual(observe(stable)[0].policyVersionEvidence, { state: 'not-collected', value: null, reasonCode: 'usage-rollup-policy-version-not-collected' });
+  const changed = [...stable];
+  changed[3] = { ...changed[3], policyVersion: 8 };
+  assert.deepEqual(observe(changed)[0].policyVersionEvidence, { state: 'not-collected', value: null, reasonCode: 'usage-rollup-policy-version-not-collected' });
+});
+
+test('real projected rollups retain coverage and totals across requested budget versions without inventing applied policy', () => {
+  const documents = getLocalRollups({ asOf: '2026-08-10T04:05:00.000Z', windows: 4 });
+  for (const document of documents) assertUsageRollupDocument(document);
+  const organizations = documents.filter((document) => document.grain === 'organization');
+  const expectedTokens = organizations.reduce((sum, document) => sum + document.totals.totalTokens, 0);
+  for (const budgetVersion of [1, 2]) {
+    const [observation] = observe([...documents, ...documents], [{
+      scope: 'organization', scopeKey: null, budgetId: 'budget-organization', budgetVersion, period: 'Daily',
+    }]);
+    assert.equal(observation.budgetVersion, budgetVersion);
+    assert.equal(observation.consumedTokens, expectedTokens);
+    assert.equal(observation.windowsCovered, 4);
+    assert.equal(observation.completeness, 'complete');
+    assert.equal(observation.policyVersionEvidence.state, 'not-collected');
+    assert.equal(observation.latestClosedWindow.end, PERIOD_END);
+  }
+});
+
+test('coverage lists are bounded at 744 windows while longer intervals retain exact summary counts', () => {
+  for (const count of [744, 745, 8760]) {
+    const [observation] = observePeriodConsumption({
+      rollups: hours(4), periodStart: PERIOD_START,
+      periodEnd: new Date(Date.parse(PERIOD_START) + count * 3600_000).toISOString(),
+      windowSeconds: 3600, scopes: [{ scope: 'organization' }],
+    });
+    assert.equal(observation.windowsCovered, 4);
+    assert.equal(observation.windowsMissing, count - 4);
+    assert.equal(observation.consumedTokens, 400);
+    assert.equal(observation.coverageDetailState, count === 744 ? 'listed' : 'summary-only');
+    if (count === 744) {
+      assert.equal(observation.missingWindows.length, 740);
+      assert.equal(observation.coveredWindows.length, 4);
+    } else {
+      assert.equal(observation.missingWindows, null);
+      assert.equal(observation.coveredWindows, null);
+    }
+  }
+});
+
+test('equivalent timestamp encodings identify the same window without double counting or inventing a gap', () => {
+  const documents = hours(4);
+  const alias = { ...documents[0], windowStart: '2026-08-10T00:00:00Z', windowEnd: '2026-08-10T01:00:00+00:00' };
+  const [observation] = observe([...documents, alias]);
+  assert.equal(observation.consumedTokens, 400);
+  assert.equal(observation.windowsCovered, 4);
+  assert.equal(observation.windowsMissing, 0);
+  assert.deepEqual(observation.missingWindows, []);
+});
+
+test('misaligned, overlapping or invalid selected windows cannot claim complete coverage', () => {
+  for (const overrides of [
+    { windowStart: 'invalid' },
+    { windowEnd: 'invalid' },
+    { windowStart: '2026-08-10T00:30:00.000Z', windowEnd: '2026-08-10T01:30:00.000Z' },
+    { windowEnd: '2026-08-10T02:00:00.000Z' },
+  ]) {
+    const documents = hours(4);
+    documents[0] = { ...documents[0], ...overrides };
+    assert.throws(() => observe(documents), /selected rollup must/);
+  }
+  const documents = hours(4);
+  documents[3].completeness.state = 'partial';
+  assert.equal(observe(documents)[0].latestClosedWindow.end, '2026-08-10T03:00:00.000Z');
 });
 
 test('a window the projector marked incomplete makes the period incomplete', () => {

@@ -8,6 +8,48 @@ const guide = await readFile(new URL('../../docs/01-deployment.md', import.meta.
 const koreanGuide = await readFile(new URL('../../docs/01-deployment_ko.md', import.meta.url), 'utf8');
 const parameters = await readFile(new URL('../../infra/main.parameters.json', import.meta.url), 'utf8');
 
+test('installation paths put explicit directory consent and propagation warnings before code deployment', async () => {
+  const quickstart = await readFile(new URL('../../docs/00-quickstart.md', import.meta.url), 'utf8');
+  const koreanQuickstart = await readFile(new URL('../../docs/00-quickstart_ko.md', import.meta.url), 'utf8');
+  for (const content of [quickstart, koreanQuickstart]) {
+    assert.match(content, /AADSTS9002326/);
+    assert.match(content, /01-deployment(?:_ko)?\.md#/);
+    assert.match(content, /03-operations(?:_ko)?\.md#/);
+  }
+  for (const content of [guide, koreanGuide, quickstart, koreanQuickstart]) {
+    const provision = content.indexOf('azd provision --no-state');
+    const deploy = content.indexOf('azd deploy --all', provision);
+    assert.ok(provision >= 0 && deploy > provision);
+    const checkpoint = content.slice(provision, deploy);
+    assert.match(checkpoint, /GroupMember\.Read\.All/);
+    assert.match(checkpoint, /not granted automatically|do not grant|자동으로 부여하지/);
+    assert.match(checkpoint, /several hours|수 시간/);
+    assert.match(checkpoint, /24 hours|24시간/);
+    assert.match(checkpoint, /Privileged Role Administrator/);
+    assert.match(checkpoint, /01-deployment|#entra/);
+  }
+  for (const content of [guide, koreanGuide]) {
+    assert.match(content, /GATEWAY_RESOURCE_GROUP_NAME --environment \$environment/);
+    assert.match(content, /functionapp identity show --subscription \$subscription/);
+    assert.match(content, /managed-identity-best-practice-recommendations#limitation-of-using-managed-identities-for-authorization/);
+  }
+});
+
+test('both installation guides explain verified first-install identity failures and safe recovery', () => {
+  for (const content of [guide, koreanGuide]) {
+    for (const term of [
+      'AADSTS9002326', 'http://localhost/governance-bootstrap',
+      'http://localhost:4173/governance-bootstrap', 'Origin',
+      "groupMembershipClaims: 'SecurityGroup'", 'ApplicationGroup',
+      'caller-policy-evidence-unavailable', 'preview-source-unavailable',
+      'ExtensibleResourceNotSupported', 'NestedDeploymentShortCircuited',
+      'az ad app show --id <administration-api-client-id> --query groupMembershipClaims',
+    ]) assert.ok(content.includes(term), `Missing first-install recovery detail: ${term}`);
+    assert.match(content, /new blank tab|빈 새 탭/);
+    assert.match(content, /overage|한도를 초과/);
+  }
+});
+
 test('the public deployment guide carries no workstation-specific npm policy', () => {
   const workstationTerms = new RegExp([
     ['package', 'feed', 'proxy'].join(''),
