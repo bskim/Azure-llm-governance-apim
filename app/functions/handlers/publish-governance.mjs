@@ -95,7 +95,7 @@ async function abandonUnpublishedProposal({
   if (!requiresElevatedRecoveryAbandonment(stored.document.authoredBy)) {
     return jsonResponse(409, { outcome: 'refused', reasonCode: 'proposal-abandonment-denied', requestId }, { requestId });
   }
-  if (!authorization.capabilities.includes('approve-own-configuration')) {
+  if (!authorization.capabilities.includes('abandon-legacy-configuration')) {
     return errorResponse(403, 'governance_access_denied', {
       requestId,
       reasonCode: 'recovery-abandonment-requires-owner',
@@ -197,7 +197,7 @@ export async function withdrawGovernanceProposal({
 }
 
 /**
- * Turn a complete governance set into a published revision.
+ * Save a complete governance proposal; explicitly resume it to approve and publish.
  *
  * Exported so a route that computes the next set from an edit publishes it through
  * exactly this path. A second copy of the lifecycle sequence would be a second answer
@@ -327,6 +327,18 @@ export async function publishGovernanceContent({
       // actor merely because a deployment has no revisions yet.
       authoredBy: initialOnly === true ? BOOTSTRAP_AUTHOR : actorCode,
     }));
+
+    if (initialOnly !== true) {
+      return jsonResponse(201, {
+        outcome: 'proposed',
+        revisionId: held.revisionId,
+        revisionNumber: held.revisionNumber,
+        state: held.state,
+        etag,
+        targets: held.targets.map(({ targetCode, outcome, reasonCode }) => ({ targetCode, outcome, reasonCode })),
+        requestId,
+      }, { requestId });
+    }
 
     for (const command of ['approve']) {
       const applied = step(held, command);

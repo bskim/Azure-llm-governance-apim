@@ -649,7 +649,10 @@ Assert-Policy ($throttleBlock.Contains('var consumedBasisPoints = ((decimal)used
 Assert-Policy ($throttleBlock.Contains('var severity = tierCode == "tier-minimal" ? 2 : tierCode == "tier-reduced" ? 1 : 0;')) 'Throttle selection must encode the deployment rate severity independently from a budget-local threshold.'
 Assert-Policy ($throttleBlock.Contains('severity &gt; selectedSeverity')) 'The strongest crossed tier must win across independent budgets.'
 Assert-Policy (-not $throttleBlock.Contains('at &gt; selectedAt')) 'A larger threshold in another budget must not override a stronger crossed throttle rate.'
-$measurementQuota = [Int64]::MaxValue
+$measurementQuotaNode = $policy.SelectSingleNode('/policies/inbound/set-variable[@name="throttleMeasurementQuota"]')
+Assert-Policy ($null -ne $measurementQuotaNode) 'Throttle measurement must declare its shared finite quota.'
+$measurementQuota = [Int64]$measurementQuotaNode.value
+Assert-Policy ($measurementQuota -eq ([Int64]::MaxValue - 1)) 'Throttle measurement must use the verified finite quota below Int64.MaxValue, not the maximum that failed live tier selection.'
 $remainingAfterFiveTokens = $measurementQuota - 5
 $consumedBasisPoints = [int](([decimal]($measurementQuota - $remainingAfterFiveTokens) / [decimal]10) * 10000)
 Assert-Policy ($consumedBasisPoints -eq 5000) 'A five-token consumption against a ten-token budget must select a 5000-basis-point threshold exactly.'
@@ -666,9 +669,10 @@ foreach ($measurement in @(
     'throttle-organization-per-model-measurement',
     'throttle-team-per-model-measurement'
 )) {
-    Assert-Policy ($null -ne $policy.SelectSingleNode("//llm-token-limit[@id='$measurement']")) "The authored throttle budget needs an independent APIM counter: $measurement"
+    $measurementPolicy = $policy.SelectSingleNode("//llm-token-limit[@id='$measurement']")
+    Assert-Policy ($null -ne $measurementPolicy) "The authored throttle budget needs an independent APIM counter: $measurement"
+    Assert-Policy ($measurementPolicy.'token-quota' -eq '@(Convert.ToInt64(context.Variables["throttleMeasurementQuota"]))') "Every throttle counter must use the verified shared finite quota: $measurement"
 }
-Assert-Policy ($policyText.Contains('9223372036854775807')) 'Throttle measurement counters must not turn an authored THROTTLE into a hard quota denial.'
 Assert-Policy ($policyText.Contains('":b:" + (string)tier["budgetId"]')) 'Throttle counter identities must include the authored budget ID.'
 # Each tier keeps its own counter key, because the platform documents unpredictable
 # behaviour when one key is declared with two different rates.

@@ -18,6 +18,7 @@ import {
   buildEntitlementAddPayload,
   buildEntitlementEditPayload,
   buildEntitlementStatePayload,
+  buildFallbackAddPayload,
   buildFallbackEditPayload,
 } from './governance-authoring.mjs';
 
@@ -111,6 +112,15 @@ const elements = {
   channelEditError: document.querySelector('#channel-edit-error'),
   channelEditActions: document.querySelector('#channel-edit-actions'),
   fallbackEdit: document.querySelector('#fallback-edit'),
+  fallbackEditTitle: document.querySelector('#fallback-edit-title'),
+  fallbackEditHelp: document.querySelector('#fallback-edit-help'),
+  fallbackEditMode: document.querySelector('#fallback-edit-mode'),
+  fallbackAddFields: document.querySelector('#fallback-add-fields'),
+  fallbackAddId: document.querySelector('#fallback-add-id'),
+  fallbackAddKind: document.querySelector('#fallback-add-kind'),
+  fallbackAddKey: document.querySelector('#fallback-add-key'),
+  fallbackAddKeyLabel: document.querySelector('#fallback-add-key-label'),
+  fallbackAddKeyOptions: document.querySelector('#fallback-add-key-options'),
   fallbackEditEnabled: document.querySelector('#fallback-edit-enabled'),
   fallbackEditIntent: document.querySelector('#fallback-edit-intent'),
   fallbackEditNotice: document.querySelector('#fallback-edit-notice'),
@@ -1519,7 +1529,7 @@ async function proposeBudgetChange(payload) {
       // not in force, and an applied change is better read back from a reload.
       elements.budgetEditSubject.textContent = result.state === 'active'
         ? t('budgetEdit.applied', { value: formatNumber(payload.changes.amount) })
-        : t('budgetEdit.proposed', { value: formatNumber(payload.changes.amount) });
+        : t('budgetEdit.proposed', { revision: result.revisionId });
       elements.budgetEditActions.replaceChildren();
       elements.budgetEditAmount.disabled = true;
     },
@@ -2184,7 +2194,7 @@ async function proposeAccessChange(pathKey, body, target = elements.accessEditEr
       },
       // A deployment derives the actor from the validated token, so sending one
       // would let the screen sign a name it has no standing to claim.
-      body: JSON.stringify(session.mode === 'local' ? { ...body, actor: 'local-auditor' } : body),
+      body: JSON.stringify(session.mode === 'local' ? { ...body, actor: 'local-admin' } : body),
     });
     const result = await response.json();
     if (!response.ok) {
@@ -3151,37 +3161,67 @@ function renderFallback(model) {
 
 /** Turning the ladder on, and opting callers into it, are separate choices. */
 function renderFallbackAuthoring(model) {
-  const planCode = model.authored?.planCode ?? null;
-  if (planCode === null) {
-    elements.fallbackEdit.hidden = true;
-    return;
-  }
+  elements.fallbackEdit.hidden = true;
   refreshAuthoringAuthority().then((result) => {
     if (!result.current) return;
     if (!result.available) {
       elements.fallbackEdit.hidden = true;
       return;
     }
-    fillFallbackAuthoring(model.authored);
+    fillOptions(elements.fallbackEditMode, [
+      ...(model.authored ? [['edit', t('fallbackEdit.title')]] : []),
+      ['add', t('fallbackAdd.title')],
+    ], [model.authored ? 'edit' : 'add']);
+    const fill = () => fillFallbackAuthoring(
+      elements.fallbackEditMode.value === 'edit' ? model.authored : null,
+      model.selection,
+    );
+    elements.fallbackEditMode.onchange = fill;
+    fill();
   });
 }
 
-function fillFallbackAuthoring(authored) {
+function fillFallbackAuthoring(authored, selection = {}) {
+  const creating = authored === null;
   elements.fallbackEditError.textContent = '';
+  elements.fallbackEditTitle.dataset.i18n = creating ? 'fallbackAdd.title' : 'fallbackEdit.title';
+  elements.fallbackEditTitle.textContent = t(elements.fallbackEditTitle.dataset.i18n);
+  elements.fallbackEditHelp.dataset.i18n = creating ? 'fallbackAdd.help' : 'fallbackEdit.help';
+  elements.fallbackEditHelp.textContent = authoringText(elements.fallbackEditHelp.dataset.i18n);
+  elements.fallbackAddFields.hidden = !creating;
+  if (creating) {
+    elements.fallbackAddId.value = '';
+    const targetKind = selection.scope === 'team' ? 'team' : 'global';
+    fillOptions(elements.fallbackAddKind,
+      ['global', 'team', 'subject', 'application'].map((kind) => [kind, t(`fallbackTarget.${kind}`)]),
+      [targetKind]);
+    elements.fallbackAddKey.value = targetKind === 'team' ? selection.teamKey ?? '' : '';
+    const updateTarget = () => {
+      const kind = elements.fallbackAddKind.value;
+      elements.fallbackAddKey.hidden = kind === 'global';
+      elements.fallbackAddKeyLabel.hidden = kind === 'global';
+      fillIdentifierDatalist(elements.fallbackAddKeyOptions,
+        kind === 'team' ? (accessOptions?.teams ?? []).map((team) => team.teamCode)
+          : kind === 'subject' ? identifierValues('gateway-subject')
+            : kind === 'application' ? identifierValues('application-client-id') : []);
+    };
+    elements.fallbackAddKind.onchange = updateTarget;
+    updateTarget();
+  }
   fillOptions(elements.fallbackEditEnabled, [
     ['true', t('fallbackEdit.enabled')],
     ['false', t('fallbackEdit.disabled')],
-  ], [String(authored.optedIn)]);
+  ], [String(authored?.optedIn ?? false)]);
   fillOptions(elements.fallbackEditIntent, [
     ['pinned', t('intent.pinned')],
     ['preferred', t('intent.preferred')],
-  ], [authored.modelSelectionIntent]);
+  ], [authored?.modelSelectionIntent ?? 'pinned']);
   fillOptions(elements.fallbackEditNotice, [
     ['header', t('notice.header')],
     ['inline', t('notice.inline')],
-  ], [authored.substitutionNotice]);
+  ], [authored?.substitutionNotice ?? 'header']);
   const registryModels = [...(accessOptions?.models ?? [])].sort();
-  const edges = (authored.edges ?? []).map(({ from, to }) => ({ from, to }));
+  const edges = (authored?.edges ?? []).map(({ from, to }) => ({ from, to }));
 
   function renderEdgeEditor() {
     elements.fallbackEditEdgeList.replaceChildren(...edges.map((edge, index) => {
@@ -3238,16 +3278,25 @@ function fillFallbackAuthoring(authored) {
   };
   renderEdgeEditor();
 
-  const propose = createElement('button', 'row-command', authoringText('fallbackEdit.propose'));
+  const propose = createElement('button', 'row-command', authoringText(creating ? 'fallbackAdd.propose' : 'fallbackEdit.propose'));
   propose.type = 'button';
   propose.addEventListener('click', () => {
-    const result = buildFallbackEditPayload(authored, {
+    const values = {
       enabled: elements.fallbackEditEnabled.value === 'true',
       modelSelectionIntent: elements.fallbackEditIntent.value,
       substitutionNotice: elements.fallbackEditNotice.value,
       edges,
       modelCodes: registryModels,
-    });
+    };
+    const result = creating
+      ? buildFallbackAddPayload({
+          ...values,
+          planId: elements.fallbackAddId.value,
+          targetKind: elements.fallbackAddKind.value,
+          targetKey: elements.fallbackAddKey.value,
+          teamKeys: (accessOptions?.teams ?? []).map((team) => team.teamCode),
+        })
+      : buildFallbackEditPayload(authored, values);
     if (!result.ok) {
       showGovernanceValidation(result, elements.fallbackEditError, elements.fallbackEditEnabled);
       return;
@@ -3662,6 +3711,9 @@ function renderLifecycleRecords(model) {
     }
 
     const actions = createElement('td');
+    if (record.state === 'draft' && record.selfApproval?.available && record.availableCommands.includes('approve')) {
+      actions.append(createElement('p', 'policy-meta', t('lifecycle.selfApproval')));
+    }
     if (record.previewAvailable) {
       const preview = createElement('button', 'row-command', t('preview.open'));
       preview.type = 'button';
@@ -3674,7 +3726,7 @@ function renderLifecycleRecords(model) {
       actions.append(createElement('p', 'empty-message', t('lifecycle.commandsNotServed')));
     } else if (session.mode !== 'local') {
       const action = record.availableCommands.includes('approve')
-        ? { command: 'resume', label: 'approve' }
+        ? { command: 'resume', label: 'approvePublish' }
         : record.availableCommands.includes('publish')
           ? { command: 'resume', label: 'publish' }
           : record.availableCommands.includes('retry') || record.availableCommands.includes('fail')
@@ -3701,6 +3753,9 @@ function renderLifecycleRecords(model) {
         if (action.command !== 'abandon' && record.availableCommands.includes('abandon')) {
           addAction({ command: 'abandon', label: 'abandon' });
         }
+        if (action.command !== 'withdraw' && record.availableCommands.includes('withdraw')) {
+          addAction({ command: 'withdraw', label: 'withdrawDraft' });
+        }
       }
     } else if (record.availableCommands.length === 0) {
       actions.append(createElement('p', 'empty-message', t('lifecycle.noActions')));
@@ -3708,7 +3763,9 @@ function renderLifecycleRecords(model) {
       for (const command of record.availableCommands) {
         const commandKey = command === 'withdraw' && record.state === 'draft'
           ? 'lifecycleCommand.withdrawDraft'
-          : `lifecycleCommand.${command}`;
+          : command === 'approve'
+            ? 'lifecycleCommand.approvePublish'
+            : `lifecycleCommand.${command}`;
         const button = createElement('button', 'row-command', t(commandKey));
         button.type = 'button';
         button.addEventListener('click', () => {
@@ -3771,7 +3828,7 @@ async function holdLifecycleRevisions(model) {
       .filter((record) => record.availableCommands.length > 0)
       .map(async (record) => {
         const response = await fetch(
-          `/api/local/lifecycle/revision?revisionId=${encodeURIComponent(record.revisionCode)}`,
+          `/api/local/lifecycle/revision?revisionId=${encodeURIComponent(record.revisionCode)}&persona=${encodeURIComponent(elements.persona.value)}`,
         );
         if (!response.ok) return;
         held.set(record.revisionCode, { ...(await response.json()), summary: model.summary });
@@ -4015,16 +4072,22 @@ async function saveRevision({ revisionCode, command, acknowledgedEtag = null, re
     // What a person typed wins over the stock reason for the command, because the one
     // command that needs a typed reason has no stock reason to fall back to.
     const reason = reasonCode ?? COMMAND_REASONS[command];
-    const response = await fetch('/api/local/lifecycle/save', {
+    const publishesProposal = command === 'approve' || command === 'publish';
+    const response = await fetch(`/api/local/lifecycle/${publishesProposal ? 'publish' : 'save'}?persona=${encodeURIComponent(elements.persona.value)}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
+      body: JSON.stringify(publishesProposal ? {
+        revisionId: revisionCode,
+        etag: reading.etag,
+        expectedRevisionNumber: reading.revisionNumber,
+        actor: 'local-admin',
+      } : {
         revisionId: revisionCode,
         etag: reading.etag,
         expectedRevisionNumber: reading.revisionNumber,
         loaded: reading.revision,
         command,
-        actor: 'local-auditor',
+        actor: 'local-admin',
         ...(reason === undefined ? {} : { reasonCode: reason }),
         ...commandArguments(command, reading.summary),
         force: acknowledgedEtag !== null,
@@ -4041,7 +4104,7 @@ async function saveRevision({ revisionCode, command, acknowledgedEtag = null, re
       );
       return;
     }
-    if (result.outcome !== 'saved') {
+    if (!response.ok || (!publishesProposal && result.outcome !== 'saved')) {
       renderRefusal(result);
       return;
     }

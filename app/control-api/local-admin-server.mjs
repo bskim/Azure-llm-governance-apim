@@ -55,7 +55,7 @@ import {
 import { availableCommands } from '../governance-domain/lifecycle/configuration-lifecycle.mjs';
 import { assembleGovernanceSnapshots } from '../governance-domain/policy/governance-snapshot-document.mjs';
 import { addBudget, editBudget, removeBudget } from '../governance-domain/policy/budget-edit.mjs';
-import { editFallbackPlan } from '../governance-domain/policy/fallback-plan-edit.mjs';
+import { addFallbackPlan, editFallbackPlan } from '../governance-domain/policy/fallback-plan-edit.mjs';
 import { addEntitlementBinding, editEntitlementBinding, ENTITLEMENT_GRANT_REASONS } from '../governance-domain/authorization/entitlement-edit.mjs';
 import { addTeam, removeTeam, TEAM_REMOVAL_REASONS } from '../governance-domain/authorization/team-catalog-edit.mjs';
 import {
@@ -148,12 +148,15 @@ function refuseUnreadableState({ response, requestId, declared, fixtureName }) {
 }
 
 function assertGovernanceAuthor(authorization) {
-  const roles = authorization.effectiveRoles ?? [];
-  if (!roles.some((role) => GOVERNANCE_AUTHORING_ROLES.includes(role))) {
+  if (!isGovernanceAuthor(authorization)) {
     const error = new Error('not-a-governance-author');
     error.code = 'not-a-governance-author';
     throw error;
   }
+}
+
+function isGovernanceAuthor(authorization) {
+  return (authorization.effectiveRoles ?? []).some((role) => GOVERNANCE_AUTHORING_ROLES.includes(role));
 }
 
 function evaluateLocalAuthorization(context, snapshots) {
@@ -239,15 +242,36 @@ const PROPOSAL_ROUTES = new Map([
             at,
           }),
   })],
-  ['/api/local/fallback/propose', (snapshots, body, at) => ({
-    ...snapshots,
-    fallbackPolicySnapshot: editFallbackPlan({
-      snapshot: snapshots.fallbackPolicySnapshot,
-      planId: body.planId,
-      changes: body.changes ?? {},
-      at,
-    }),
-  })],
+  ['/api/local/fallback/propose', (snapshots, body, at) => {
+    if (body.command !== undefined && !['add', 'edit'].includes(body.command)) {
+      const error = new Error('fallback_command_unsupported');
+      error.code = 'fallback_command_unsupported';
+      throw error;
+    }
+    if (body.command === 'add' && (body.plan === null || typeof body.plan !== 'object' || Array.isArray(body.plan))) {
+      const error = new Error('plan_required');
+      error.code = 'plan_required';
+      throw error;
+    }
+    return {
+      ...snapshots,
+      fallbackPolicySnapshot: body.command === 'add'
+        ? addFallbackPlan({
+            snapshot: snapshots.fallbackPolicySnapshot,
+            plan: body.plan,
+            registry: snapshots.modelRegistrySnapshot,
+            teamCatalog: snapshots.entitlementSnapshot.teamCatalog,
+            issuedBy: { kind: 'subject', key: body.actor },
+            at,
+          })
+        : editFallbackPlan({
+            snapshot: snapshots.fallbackPolicySnapshot,
+            planId: body.planId,
+            changes: body.changes ?? {},
+            at,
+          }),
+    };
+  }],
   ['/api/local/entitlements/propose', (snapshots, body, at) => ({
     ...snapshots,
     entitlementSnapshot: body.command === 'add'
@@ -403,13 +427,30 @@ export function createLocalAdminServer({ source = createLocalGovernanceSource({ 
    * the seed is the current set; after a publish it is what was published, because an
    * edit that vanished from the screen it was made on is worse than one that failed.
    */
-  async function currentSnapshots() {
+  async function currentSnapshots(options = {}) {
     const documents = await revisionStore.queryGovernanceSnapshots({
       scopeGroupId: SCOPE_GROUP_ID,
       evaluationTime,
     });
-    if (documents.length === 0) return await source.readGovernanceSnapshots();
+    if (documents.length === 0) return await source.readGovernanceSnapshots(options);
     return assembleGovernanceSnapshots(documents);
+  }
+
+  async function lifecycleAuthorization(url, response, requestId, { write = false } = {}) {
+    const personaName = url.searchParams.get('persona') ?? 'governance-admin';
+    if (!isKnownPersona(personaName)) {
+      json(response, 400, { error: { code: 'selection_not_supported', requestId } }, requestId);
+      return null;
+    }
+    const runtime = createPersonaRuntime(personaName, idGenerator);
+    const identity = await runtime.identityAdapter.getVerifiedIdentity();
+    const context = await runtime.factory.create(identity);
+    const { authorization } = evaluateLocalAuthorization(context, await currentSnapshots());
+    if (write && !isGovernanceAuthor(authorization)) {
+      json(response, 403, { outcome: 'refused', reasonCode: 'not-a-governance-author', requestId }, requestId);
+      return null;
+    }
+    return authorization;
   }
 
   const notificationLedger = createNotificationLedger({
@@ -628,9 +669,20 @@ export function createLocalAdminServer({ source = createLocalGovernanceSource({ 
         json(response, 400, { error: { code: 'selection_not_supported', requestId } }, requestId);
         return;
       }
+      if (await lifecycleAuthorization(url, response, requestId, { write: true }) === null) return;
       const held = await revisionWriter.readForEdit({ scopeGroupId: 'platform-engineering', revisionId });
       if (held === null) {
         json(response, 404, { error: { code: 'revision_absent', requestId } }, requestId);
+        return;
+      }
+      if (command === 'withdraw' && held.revision.authoredBy !== actor) {
+        json(response, 409, { outcome: 'refused', reasonCode: 'proposal-withdrawal-denied', requestId }, requestId);
+        return;
+      }
+      if (command === 'abandon'
+        && (source.capabilities.recoveryAbandonmentActors?.includes(actor) !== true
+          || !['bootstrap-import', 'governance-administrator'].includes(held.revision.authoredBy))) {
+        json(response, 403, { outcome: 'refused', reasonCode: 'recovery-abandonment-requires-owner', requestId }, requestId);
         return;
       }
       try {
@@ -715,9 +767,10 @@ export function createLocalAdminServer({ source = createLocalGovernanceSource({ 
         // A refused edit is the operator's answer, not a fault. Only something with no
         // reason code of its own is treated as one.
         const refused = typeof error.code === 'string' || error instanceof DraftUnavailableError;
+        const malformed = ['plan_required', 'fallback_command_unsupported'].includes(error.code);
         json(
           response,
-          refused ? 409 : 500,
+          malformed ? 400 : refused ? 409 : 500,
           { outcome: 'refused', reasonCode: error.code ?? 'propose_failed', requestId },
           requestId,
         );
@@ -725,8 +778,8 @@ export function createLocalAdminServer({ source = createLocalGovernanceSource({ 
       return;
     }
 
-    // Applying an approved proposal. There is nowhere to put content: what publishes is
-    // what was approved, read from the store.
+    // Explicit approval and publication of a stored proposal. No replacement content
+    // is accepted, and an ordinary edit never enters this route.
     if (url.pathname === '/api/local/lifecycle/publish') {
       if (request.method !== 'POST') {
         json(response, 405, { error: { code: 'method_not_allowed', requestId } }, requestId);
@@ -741,9 +794,43 @@ export function createLocalAdminServer({ source = createLocalGovernanceSource({ 
         return;
       }
       const { revisionId, actor } = body;
+      if (Object.keys(body).some((key) => !['revisionId', 'actor', 'etag', 'expectedRevisionNumber'].includes(key))) {
+        json(response, 400, { outcome: 'refused', reasonCode: 'resume-mutation-not-allowed', requestId }, requestId);
+        return;
+      }
       if (typeof revisionId !== 'string' || typeof actor !== 'string') {
         json(response, 400, { error: { code: 'selection_not_supported', requestId } }, requestId);
         return;
+      }
+      if (await lifecycleAuthorization(url, response, requestId, { write: true }) === null) return;
+      const held = await revisionWriter.readForEdit({ scopeGroupId: SCOPE_GROUP_ID, revisionId });
+      if (held === null) {
+        json(response, 404, { error: { code: 'revision_absent', requestId } }, requestId);
+        return;
+      }
+      if ((body.etag !== undefined && body.etag !== held.etag)
+        || (body.expectedRevisionNumber !== undefined && body.expectedRevisionNumber !== held.revision.revisionNumber)) {
+        json(response, 409, { outcome: 'refused', reasonCode: 'revision-conflict', requestId }, requestId);
+        return;
+      }
+      if (await revisionStore.readConfigurationDraft({ scopeGroupId: SCOPE_GROUP_ID, revisionId }) === null) {
+        json(response, 409, { outcome: 'refused', reasonCode: 'draft-content-absent', requestId }, requestId);
+        return;
+      }
+      if (held.revision.state === 'draft') {
+        const approved = await revisionWriter.save({
+          loaded: held.revision,
+          etag: body.etag ?? held.etag,
+          expectedRevisionNumber: body.expectedRevisionNumber ?? held.revision.revisionNumber,
+          command: 'approve',
+          actor,
+          at: evaluationTime,
+          selfApprovalGranted: source.capabilities.selfApprovalActors.includes(actor),
+        });
+        if (approved.outcome !== 'saved') {
+          json(response, 409, approved, requestId);
+          return;
+        }
       }
       const revisions = await revisionStore.queryConfigurationRevisions({ scopeGroupId: SCOPE_GROUP_ID });
       const inFlight = revisions.find(
@@ -838,6 +925,8 @@ export function createLocalAdminServer({ source = createLocalGovernanceSource({ 
     // projection and cannot say which version a save should be written against.
     if (url.pathname === '/api/local/lifecycle/revision') {
       await seedRevisions();
+      const authorization = await lifecycleAuthorization(url, response, requestId);
+      if (authorization === null) return;
       const revisionId = url.searchParams.get('revisionId') ?? '';
       const viewer = url.searchParams.get('viewer') ?? source.capabilities.defaultLifecycleViewer;
       const held = await revisionWriter.readForEdit({ scopeGroupId: 'platform-engineering', revisionId });
@@ -854,10 +943,15 @@ export function createLocalAdminServer({ source = createLocalGovernanceSource({ 
           state: held.revision.state,
           etag: held.etag,
           revision: held.revision,
-          availableCommands: availableCommands(held.revision, {
+          availableCommands: isGovernanceAuthor(authorization) ? availableCommands(held.revision, {
             actor: viewer,
             selfApprovalGranted: source.capabilities.selfApprovalActors.includes(viewer),
-          }),
+          }).filter((command) => {
+            if (command === 'withdraw') return held.revision.authoredBy === viewer;
+            if (command === 'abandon') return source.capabilities.recoveryAbandonmentActors?.includes(viewer) === true
+              && ['bootstrap-import', 'governance-administrator'].includes(held.revision.authoredBy);
+            return true;
+          }) : [],
         },
         requestId,
       );
@@ -1277,7 +1371,7 @@ export function createLocalAdminServer({ source = createLocalGovernanceSource({ 
         const runtime = createPersonaRuntime(personaName, idGenerator);
         const verifiedIdentity = await runtime.identityAdapter.getVerifiedIdentity();
         const context = await runtime.factory.create(verifiedIdentity);
-        const snapshots = await source.readGovernanceSnapshots({ entitlementView: entitlement });
+        const snapshots = await currentSnapshots({ entitlementView: entitlement });
         const { authorization } = evaluateLocalAuthorization(context, snapshots);
         const allowedModels = authorization.modelAllowlist ?? [];
         // No plan authored at all, which the screen must tell apart from a plan whose
@@ -1423,6 +1517,8 @@ export function createLocalAdminServer({ source = createLocalGovernanceSource({ 
           },
           viewerCode: viewer,
           selfApprovalGranted: source.capabilities.selfApprovalActors.includes(viewer),
+          commandsAvailable: isGovernanceAuthor(authorization),
+          recoveryAbandonmentGranted: source.capabilities.recoveryAbandonmentActors?.includes(viewer) === true,
           storedProposalAvailableByRevision: Object.fromEntries(
             await Promise.all(revisions.map(async (revision) => [
               revision.revisionId,

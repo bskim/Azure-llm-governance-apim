@@ -15,8 +15,7 @@ import {
 const SCOPE_GROUP_ID = 'platform-engineering';
 const AUTHOR = 'local-admin';
 const APPROVER = 'local-auditor';
-// The single-administrator deployment, present locally so the exception is exercised
-// rather than only described.
+// Retained as a separate owner fixture; ordinary administrators can self-approve too.
 const OWNER = 'local-owner';
 const TARGETS = Object.freeze(['gateway-named-values', 'gateway-policy', 'gateway-backend']);
 
@@ -87,8 +86,8 @@ function buildRevisions() {
 
   const approved = command(draft('revision-0009', 9, at(40)), 'approve', at(42));
   const pending = draft('revision-0010', 10, at(45));
-  // The single-administrator case: a draft whose author is the only person who can
-  // approve it. Present so the exception is a state a screen can be read in.
+  // Retain the owner-authored draft alongside the ordinary administrator's draft,
+  // without rewriting the seeded revision histories.
   const ownerDraft = draft('revision-0011', 11, at(46), OWNER);
 
   let superseded = command(draft('revision-0005', 5, at(1)), 'approve', at(2));
@@ -109,4 +108,5 @@ export function getDeterministicConfigurationRevisions() {
 export const LOCAL_LIFECYCLE_ACTORS = Object.freeze({ author: AUTHOR, approver: APPROVER, owner: OWNER });
 
 /** Which local actors hold `approve-own-configuration`. Never read from a request. */
-export const LOCAL_SELF_APPROVERS = Object.freeze([OWNER]);
+export const LOCAL_SELF_APPROVERS = Object.freeze([AUTHOR, OWNER]);
+export const LOCAL_RECOVERY_ABANDONERS = Object.freeze([OWNER]);

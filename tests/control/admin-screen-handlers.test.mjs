@@ -16,6 +16,7 @@ import { createNotificationLedger } from '../../app/control-api/notification-led
 import { createInMemoryGovernanceStore } from '../../app/persistence/in-memory-governance-store.mjs';
 import { getDeterministicGovernanceSnapshots } from '../../app/local-adapters/deterministic-governance-snapshots.mjs';
 import { getUsersGroupsFixture } from '../../app/local-adapters/users-groups-fixtures.mjs';
+import { createRevision } from '../../app/governance-domain/lifecycle/configuration-lifecycle.mjs';
 
 const NOW = '2026-07-24T10:00:00.000Z';
 const AUDIENCE = 'api://control-plane';
@@ -399,6 +400,45 @@ test('lifecycle withholds proposal actions when the deployed handler cannot deri
     deriveLifecycleActor: () => {
       throw new Error('identity derivation unavailable');
     },
+  });
+
+  test('deployed lifecycle shows admin self-approval and author withdrawal without granting owner recovery', async () => {
+    const author = 'actor1-0123456789abcdef0123456789abcdef';
+    const other = 'actor1-fedcba9876543210fedcba9876543210';
+    const makeDraft = (revisionId, revisionNumber, authoredBy) => createRevision({
+      scopeGroupId: 'platform-engineering', revisionId, revisionNumber, authoredBy,
+      authoredAt: NOW, targets: ['governance-snapshot-budget'],
+    });
+    const revisions = [
+      makeDraft('revision-0001', 1, author),
+      makeDraft('revision-0002', 2, 'governance-administrator'),
+      makeDraft('revision-0003', 3, 'bootstrap-import'),
+    ];
+    const screen = (viewerCode) => handlers({
+      deriveLifecycleActor: () => viewerCode,
+      readConfigurationRevisions: async () => revisions,
+      hasConfigurationDraft: async ({ revisionId }) => revisionId === 'revision-0001',
+    }).lifecycle;
+    const own = await screen(author)(requestWith({ query: '?scope=global' }), invocation);
+    const ownDraft = own.jsonBody.records.find((record) => record.revisionCode === 'revision-0001');
+    assert.ok(ownDraft.availableCommands.includes('approve'));
+    assert.ok(ownDraft.availableCommands.includes('withdraw'));
+    assert.deepEqual(ownDraft.selfApproval, { available: true });
+    assert.equal(own.jsonBody.records.some((record) => record.availableCommands.includes('abandon')), false);
+
+    const second = await screen(other)(requestWith({ query: '?scope=global' }), invocation);
+    const otherDraft = second.jsonBody.records.find((record) => record.revisionCode === 'revision-0001');
+    assert.ok(otherDraft.availableCommands.includes('approve'));
+    assert.equal(otherDraft.availableCommands.includes('withdraw'), false);
+    assert.equal(otherDraft.selfApproval, null);
+    const owner = await screen(other)(requestWith({ roles: ['Governance.Own'], query: '?scope=global' }), invocation);
+    for (const id of ['revision-0002', 'revision-0003']) {
+      assert.deepEqual(owner.jsonBody.records.find((record) => record.revisionCode === id).availableCommands, ['abandon']);
+    }
+    assert.equal(owner.jsonBody.records.find((record) => record.revisionCode === 'revision-0001').availableCommands.includes('abandon'), false);
+    const reader = await screen(author)(requestWith({ roles: ['Governance.Read'], query: '?scope=global' }), invocation);
+    assert.deepEqual(reader.jsonBody.records.flatMap((record) => record.availableCommands), []);
+    assert.equal((await screen(author)(requestWith({ roles: ['Unknown.Role'] }), invocation)).status, 403);
   });
 
   const response = await lifecycle(

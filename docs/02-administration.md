@@ -4,7 +4,7 @@ The console is where an administrator sees what the gateway is doing and changes
 
 Two facts apply throughout the console.
 
-**A bootstrap import is approved and published in one step; every subsequent supported change is stored as a draft.** A different write-capable administrator must resume the draft to approve and publish it. An explicitly configured own-approval capability is the only exception, and the lifecycle records that approval as an exception. The new revision governs requests only after every publication target confirms it. If publication stops partway through, callers keep getting the previous active revision.
+**Ordinary changes always take two steps: save a draft, then explicitly approve and publish.** The default `Governance.Administer` role can approve its own saved draft, or another administrator can approve it. No extra setting or Entra role grant is needed for self-approval. Saving never publishes ordinary budget, model, access, or fallback edits, even for an owner. Only an explicit `initialOnly` bootstrap import retains one-step approval and publication. The new revision governs requests only after every publication target confirms it. If publication stops partway through, callers keep getting the previous active revision.
 
 **A screen that cannot answer refuses instead of showing nothing.** An empty table and a store that has never been written are different facts, and the console does not render them alike. When you see a refusal with a reason code, that is the product declining to present an answer it does not have.
 
@@ -34,13 +34,13 @@ This screen is the one to open when you are not sure whether a change reached ca
 
 A revision that shows fewer confirmed targets than it has is mid-publish, and the previous revision is still what callers get.
 
-A later draft cannot be approved by its author. A different write-capable administrator resumes it to record the distinct approval and publish it; an explicitly granted own-approval capability is recorded as such rather than presented as an ordinary review.
+Saving returns HTTP `201` with `outcome: proposed`, `state: draft`, and the revision ID, without publication target writes. On the Publishing screen, the author or another write-capable administrator explicitly chooses **Approve and publish**. A single administrator can complete both steps. Self-approval records the same truthful actor code for author and approver and the existing `self-approval-granted` reason; a different administrator's approval keeps their distinct actor code. Previous histories are not rewritten.
 
 To approve or retry, the console sends an approval-only request, `{ "resume": true, "revisionId": "revision-0002" }`. It identifies an already stored proposal and contains no configuration or mutation fields. The service loads and publishes the immutable stored proposal, so a reviewer cannot substitute content and the recorded author remains the author of what is published.
 
 A target failure changes the lifecycle to `failed`; fix its cause and retry the stored proposal, which retries only the unfinished targets. To change a draft, its author must withdraw it and submit a new proposal. A draft author can abandon their own unapproved proposal with `POST /v1/admin/governance/publish` and `{ "command": "withdraw", "revisionId": "revision-0002" }`. This records a terminal withdrawal without publishing content; readers and other administrators cannot withdraw it.
 
-The console exposes `{ "command": "abandon", "revisionId": "revision-0002" }` only when the service permits recovery abandonment: a legacy, bootstrap, or shared-author draft, approval, failed proposal, or publishing proposal has no verified target, and its author cannot be matched to the current administrator. It additionally requires both the publish and elevated own-approval capabilities. Any verified target refuses abandonment with `proposal-abandonment-verified-targets`; a draft or approval carrying any publication activity is also refused. Repair and retry instead. A legacy revision with no stored proposal likewise refuses content replacement: with verified targets it reports `legacy-recovery-required`, and with none it reports `legacy-recovery-abandon-required` until an elevated administrator abandons it and creates a fresh proposal.
+Recovery abandonment remains **owner-only**, separate from administrator self-approval. The console exposes `{ "command": "abandon", "revisionId": "revision-0002" }` only for an eligible untouched draft, approval, or failed proposal authored by `bootstrap-import` or the legacy shared `governance-administrator`. It requires publish permission and the focused `abandon-legacy-configuration` capability held only by `Governance.Own`; ordinary administrators cannot use it to discard another author's proposal. Publishing proposals are refused, and verified targets or publication activity also prevent abandonment. Verified targets report `proposal-abandonment-verified-targets`. Repair and retry instead. A legacy revision with no stored proposal refuses content replacement: with verified targets it reports `legacy-recovery-required`, and with none it reports `legacy-recovery-abandon-required` until an authorized owner abandons it and creates a fresh proposal.
 
 ### Preview A Saved Draft
 
@@ -95,7 +95,7 @@ The current deployment supports `tier-reduced` and `tier-minimal`. Their request
 3. Select `all-models` or `per-model`. A per-model budget requires a logical model key from the published model catalogue and is supported only for organization and team scopes. Subject and application scopes support all-model budgets only.
 4. Select `Hourly`, `Daily`, `Weekly`, `Monthly`, or `Yearly`, then enter a positive whole-number token limit.
 5. Select the action and its threshold settings. An edit can change the amount, period, model coverage, action, and thresholds. Switching to all models removes the individual model key. Unsupported combinations and overlapping budget coverage are refused. The same scope and model coverage can have one quota budget (`HARD_BLOCK` or `SOFT_WARNING`) and one `THROTTLE` budget. Choosing another period does not permit a second budget of the same kind.
-6. Submit the proposal, then follow the approval and publication flow in [Publishing](#publishing). Saving a draft does not change the active budget. Another write-capable administrator approves it unless explicitly granted self-approval applies; the change takes effect only after the publication targets are verified.
+6. Save the draft, then follow the explicit approval and publication step in [Publishing](#publishing). Saving a draft does not change the active budget. You or another administrator can approve and publish it; the change takes effect only after the publication targets are verified.
 
 Changing a budget's settings creates a new version; an unchanged submission is refused. APIM counter keys include the budget ID and version, so the new version does not inherit the previous version's consumption counter. Editing a budget is not a way to preserve a continuous billing-period total; the usage history remains a separate record.
 
@@ -129,9 +129,36 @@ The screen answers three separate questions: what was authored, which hops this 
 
 When a plan sends a request to another model, the response is not rewritten to hide that. A caller can therefore receive a model it did not name, and both this screen and the usage records say which one served.
 
+### Creating a fallback plan
+
+A fresh installation with `fallback: null` has an empty plan list. A write-capable administrator can now open **Fallback** and use **Create a fallback plan**, even when the screen reports no plan. When a plan already exists, select the creation operation to add a plan for a different target.
+
+1. Enter a unique plan identifier and choose the target: `global` (no key), `team` (an existing canonical team key), `subject` (gateway subject), or `application` (application client ID). The identifier suggestions reuse the published catalogue; administrator actor codes and diagnostic HMAC keys are not substitutes for target identifiers.
+2. Add connections using registered model aliases, for example `coding-secondary` → `coding-primary`. Creation does not widen any entitlement. The actual caller must still be entitled to both models, and the existing compiler checks API-family compatibility.
+3. The safe defaults are **disabled**, **pinned**, and **header**. An operator may explicitly enable the plan and select **preferred** with **inline** notices; inline is refused with pinned intent. Duplicate plan identifiers, another plan for the exact same target (including disabled or retired plans), unknown teams/models, self-loops, cycles, and multiple targets for one source are refused.
+4. Choose **Save new plan draft**. The response is HTTP `201`, `state: draft`, and the actual revision ID. No active policy or publication target is written. In **Publishing**, the same administrator or another administrator must explicitly approve and publish that immutable proposal; normal author-only withdrawal and owner-only legacy recovery remain unchanged.
+
+The existing deployed route `POST /api/v1/admin/fallback` now accepts creation:
+
+```json
+{
+  "command": "add",
+  "plan": {
+    "planId": "plan-global-coding-fallback",
+    "target": { "kind": "global", "key": null },
+    "enabled": false,
+    "modelSelectionIntent": "pinned",
+    "substitutionNotice": "header",
+    "edges": [{ "from": "coding-secondary", "to": "coding-primary" }]
+  }
+}
+```
+
+The server sets version, state, validity start, issuer, and the `fallback-plan-created` reason; creation cannot replace those fields. The three safe-default settings may be omitted. Explicit approval/publication uses the same route with only `{ "resume": true, "revisionId": "<returned revision ID>" }`. Later, save `{ "planId": "plan-global-coding-fallback", "changes": { "enabled": true, "modelSelectionIntent": "preferred", "substitutionNotice": "inline" } }` and explicitly approve/publish the new returned draft. Readers cannot create or resume. The local equivalent creation route is `POST /api/local/fallback/propose`; its console uses the same two-step workflow.
+
 ### Editing an existing fallback plan
 
-The editor preserves the existing plan's enabled state, selection intent, and substitution notice. It can replace that plan's model connections without changing its identity, target, issuer, or validity window. Creating a plan for a new scope still requires an approved whole-set publication.
+The editor preserves the existing plan's enabled state, selection intent, and substitution notice. It can replace that plan's model connections without changing its identity, target, issuer, or validity window. Creation and editing both save a complete proposal for explicit approval and verified publication.
 
 1. Select the scope whose existing plan you intend to change. Enable fallback and choose `preferred` intent if requests may use a substitute; `pinned` intent keeps the requested model.
 2. Add, remove, or change source-to-target model connections using registered aliases. A plan can contain at most 32 connections; self-loops, cycles, and multiple outgoing connections from one source are refused.

@@ -327,8 +327,15 @@ test('document links stay in one language except for the README switch', () => {
 test('connection and administration guides pin the corrected runtime contracts', () => {
   assert.match(text('docs/04-connection.md'), /client ID is onboarding information, not discovery metadata/);
   assert.match(text('docs/04-connection_ko.md'), /클라이언트 ID는 초기 연결을 위해 관리자가 제공하는 정보이며 자동 검색 메타데이터에 포함되지 않습니다/);
-  assert.match(text('docs/02-administration.md'), /subsequent supported change is stored as a draft/);
-  assert.match(text('docs/02-administration_ko.md'), /이후 지원되는 변경은 초안으로 저장됩니다/);
+  assert.match(text('docs/02-administration.md'), /Ordinary changes always take two steps: save a draft, then explicitly approve and publish/);
+  assert.match(text('docs/02-administration_ko.md'), /일반 변경은 항상 두 단계입니다. 먼저 초안을 저장하고, 이후 명시적으로 승인 및 게시합니다/);
+  assert.match(text('docs/02-administration.md'), /default `Governance.Administer` role can approve its own saved draft, or another administrator can approve it/);
+  assert.match(text('docs/02-administration_ko.md'), /기본 `Governance.Administer` 역할은 자신의 저장된 초안을 승인할 수 있으며 다른 관리자도 승인할 수 있습니다/);
+  for (const guide of ['docs/02-administration.md', 'docs/02-administration_ko.md']) {
+    for (const term of ['self-approval-granted', 'abandon-legacy-configuration', 'Governance.Own', 'initialOnly']) {
+      assert.ok(text(guide).includes(term), `${guide} omits ${term}`);
+    }
+  }
   assert.match(text('docs/02-administration.md'), /approval-only request/);
   assert.match(text('docs/02-administration_ko.md'), /승인 전용 요청/);
   assert.match(text('docs/02-administration.md'), /"resume": true, "revisionId"/);
@@ -339,8 +346,8 @@ test('connection and administration guides pin the corrected runtime contracts',
   assert.match(text('docs/02-administration_ko.md'), /proposal-abandonment-verified-targets/);
   assert.match(text('docs/02-administration.md'), /legacy-recovery-abandon-required/);
   assert.match(text('docs/02-administration_ko.md'), /legacy-recovery-abandon-required/);
-  assert.match(text('docs/02-administration.md'), /draft, approval, failed proposal, or publishing proposal/);
-  assert.match(text('docs/02-administration_ko.md'), /draft, approved, failed 또는 publishing 제안/);
+  assert.match(text('docs/02-administration.md'), /Publishing proposals are refused/);
+  assert.match(text('docs/02-administration_ko.md'), /publishing 상태.*포기를 거부/);
   assert.match(text('docs/01-deployment.md'), /--resume --revision-id/);
   assert.match(text('docs/01-deployment_ko.md'), /--resume --revision-id/);
   assert.match(text('docs/01-deployment.md'), /default governance and rollup containers do not set a TTL/);

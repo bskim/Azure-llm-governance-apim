@@ -270,7 +270,7 @@ test('approving your own change is not offered, so the rule is visible before th
 
   const asAuthor = revision(project({ viewerCode: LOCAL_LIFECYCLE_ACTORS.author }), 'revision-0010');
   assert.equal(asAuthor.availableCommands.includes('approve'), false);
-  assert.deepEqual(asAuthor.availableCommands, ['edit', 'withdraw']);
+  assert.deepEqual(asAuthor.availableCommands, ['withdraw'], 'immutable proposals must be withdrawn, not edited');
   assert.deepEqual(asAuthor.selfApproval, { available: false });
 });
 

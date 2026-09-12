@@ -96,6 +96,7 @@ function projectRevision(
     // refusal after the click.
     availableCommands: commandsAvailable && callerIdentifiable
       ? [...availableCommands(revision, { actor: viewerCode, selfApprovalGranted })].filter((command) => {
+        if (command === 'edit') return false;
         const isSharedRecovery = RECOVERY_SHARED_AUTHORS.has(revision.authoredBy);
         if (command === 'abandon') {
           return isSharedRecovery && recoveryAbandonmentGranted && !hasPublicationActivity(revision);

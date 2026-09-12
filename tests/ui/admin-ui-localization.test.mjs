@@ -71,6 +71,20 @@ test('locale resolution and fallback are deterministic', () => {
   assert.equal(translate('ko', 'lifecycleCommand.withdrawDraft'), '초안 철회');
 });
 
+test('publication copy describes explicit saved-draft self-approval without mislabeling prior denials', () => {
+  assert.match(translate('en', 'lifecycle.selfApproval'), /your own saved draft/);
+  assert.match(translate('en', 'lifecycle.selfApproval'), /another administrator/);
+  assert.match(translate('ko', 'lifecycle.selfApproval'), /다른 관리자/);
+  assert.equal(translate('en', 'lifecycleCommand.approvePublish'), 'Approve and publish');
+  assert.equal(translate('ko', 'lifecycleCommand.approvePublish'), '승인 및 게시');
+  for (const key of ['budgetEdit.proposed', 'accessEdit.proposed']) {
+    assert.match(translate('en', key), /saved, not published/);
+    assert.match(translate('ko', key), /아직 게시하지 않았습니다/);
+  }
+  assert.match(translate('en', 'lifecycleReason.separation-of-duties'), /did not have/);
+  assert.match(translate('en', 'auditReason.self-approval-granted'), /explicitly approved their own/);
+});
+
 test('every static HTML translation key exists in both catalogs', async () => {
   const html = await readFile(new URL('index.html', publicRoot), 'utf8');
   const keys = [

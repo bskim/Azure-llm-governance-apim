@@ -133,19 +133,30 @@ async function createHeldDraft(store) {
     requestWith({ body: { content: { snapshots } }, objectId: 'object-admin-0002' }),
     invocation,
   );
-  assert.equal(response.status, 409);
-  assert.equal(response.jsonBody.reasonCode, 'separation-of-duties');
+  assert.equal(response.status, 201);
+  assert.equal(response.jsonBody.state, 'draft');
+}
+
+async function approveSaved(store, saved) {
+  assert.equal(saved.status, 201);
+  assert.equal(saved.jsonBody.state, 'draft');
+  assert.ok(saved.jsonBody.targets.every((target) => target.outcome === 'pending'));
+  return handlerFor(store)(requestWith({
+    body: { resume: true, revisionId: saved.jsonBody.revisionId },
+  }), invocation);
 }
 
 test('adding a model captures it from the provider reading, with nothing supplied by hand', async () => {
   const store = await publishedStore();
   const before = await readPublished(store);
 
-  const response = await handlerFor(store)(
+  let response = await handlerFor(store)(
     requestWith({ roles: ['Governance.Own'], body: { command: 'add', deploymentName: 'deploy-coding-swift' } }),
     invocation,
   );
 
+  assert.deepEqual(await readPublished(store), before, 'saving must leave the active registry unchanged');
+  response = await approveSaved(store, response);
   assert.equal(response.status, 200);
   const after = await readPublished(store);
   assert.equal(after.modelRegistrySnapshot.models.length, before.modelRegistrySnapshot.models.length + 1);
@@ -196,10 +207,12 @@ test('recapture refreshes the whole published registry from provider deployments
     raiPolicyName: 'recaptured-policy',
   }));
 
-  const response = await handlerFor(store, {
+  let response = await handlerFor(store, {
     readProviderDeployments: async () => ({ deployments }),
   })(requestWith({ roles: ['Governance.Own'], body: { command: 'recapture' } }), invocation);
 
+  assert.deepEqual(await readPublished(store), before);
+  response = await approveSaved(store, response);
   assert.equal(response.status, 200);
   const after = await readPublished(store);
   assert.equal(after.modelRegistrySnapshot.version, before.modelRegistrySnapshot.version + 1);

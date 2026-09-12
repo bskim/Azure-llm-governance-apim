@@ -655,10 +655,11 @@
         var policy = (JObject)context.Variables["effectivePolicy"];
         return policy["substitutionNotice"] == null ? "header" : (string)policy["substitutionNotice"];
       }' />
-    <!-- A throttle has to observe its own budget.  These counters use an effectively
-         unbounded quota only as an APIM token meter; the tier below compares its consumed
-         amount with the authored quota, so THROTTLE itself never becomes a hard denial. -->
-    <set-variable name="throttleMeasurementQuota" value="9223372036854775807" />
+    <!-- A throttle has to observe its own budget. These counters use an effectively
+         unbounded, finite quota as an APIM token meter; the tier compares consumption
+         with the authored quota. Keep below Int64.MaxValue: live validation with that
+         maximum did not expose prior consumption to inbound tier selection. -->
+    <set-variable name="throttleMeasurementQuota" value="9223372036854775806" />
     <set-variable name="throttleOrganizationAllBudget" value='@{
         var tiers = ((JObject)context.Variables["effectivePolicy"])["throttleTiers"] as JArray;
         return tiers == null ? null : tiers.FirstOrDefault(t =&gt; (string)t["scope"] == "organization" &amp;&amp; (string)t["modelScope"] == "all-models");

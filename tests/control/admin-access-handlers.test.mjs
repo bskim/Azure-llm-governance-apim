@@ -132,8 +132,18 @@ async function createHeldDraft(store) {
     }),
     invocation,
   );
-  assert.equal(response.status, 409);
-  assert.equal(response.jsonBody.reasonCode, 'separation-of-duties');
+  assert.equal(response.status, 201);
+  assert.equal(response.jsonBody.state, 'draft');
+}
+
+async function approveSaved(store, saved) {
+  assert.equal(saved.status, 201);
+  assert.equal(saved.jsonBody.outcome, 'proposed');
+  assert.equal(saved.jsonBody.state, 'draft');
+  assert.ok(saved.jsonBody.targets.every((target) => target.outcome === 'pending'));
+  return handlersFor(store).change(requestWith({
+    body: { resume: true, revisionId: saved.jsonBody.revisionId },
+  }), invocation);
 }
 
 async function readPublished(store) {
@@ -294,11 +304,13 @@ test('a change to an allowlist is published and is what the next reader resolves
   const binding = before.entitlementSnapshot.bindings.find((entry) => entry.state === 'active');
   const narrowed = [binding.modelAllowlist[0]];
 
-  const response = await change(
+  let response = await change(
     requestWith({ roles: ['Governance.Own'], body: { bindingId: binding.bindingId, changes: { modelAllowlist: narrowed } } }),
     invocation,
   );
 
+  assert.deepEqual(await readPublished(store), before, 'saving must leave active access unchanged');
+  response = await approveSaved(store, response);
   assert.equal(response.status, 200);
   assert.equal(response.jsonBody.state, 'active');
   assert.ok(response.jsonBody.targets.every((target) => target.outcome === 'verified'));
@@ -321,8 +333,8 @@ test('retiring a non-global entitlement follows the existing draft lifecycle', a
     body: { bindingId: binding.bindingId, changes: { state: 'revoked' } },
   }), invocation);
 
-  assert.equal(response.status, 409);
-  assert.equal(response.jsonBody.reasonCode, 'separation-of-duties');
+  assert.equal(response.status, 201);
+  assert.equal(response.jsonBody.state, 'draft');
   assert.equal(
     (await readPublished(store)).entitlementSnapshot.bindings
       .find((entry) => entry.bindingId === binding.bindingId).state,
@@ -352,12 +364,13 @@ test('the publication declares no membership target, because a change carries no
   const { change } = handlersFor(store);
   const binding = (await readPublished(store)).entitlementSnapshot.bindings.find((entry) => entry.state === 'active');
 
-  const response = await change(
+  let response = await change(
     requestWith({ roles: ['Governance.Own'], body: { bindingId: binding.bindingId, changes: { modelAllowlist: [binding.modelAllowlist[0]] } } }),
     invocation,
   );
 
   assert.ok(response.jsonBody.targets.every((target) => target.targetCode !== 'principal-membership'));
+  response = await approveSaved(store, response);
   assert.ok(response.jsonBody.targets.every((target) => target.outcome === 'verified'));
 });
 
@@ -467,7 +480,7 @@ test('a budget change is published and is what the next reader resolves', async 
   const { changeBudget } = handlersFor(store);
   const before = await readPublished(store);
 
-  const response = await changeBudget(
+  let response = await changeBudget(
     requestWith({
       roles: ['Governance.Own'],
       body: { command: 'edit', budgetId: 'budget-organization-monthly', changes: { amount: 30_000_000 } },
@@ -475,6 +488,8 @@ test('a budget change is published and is what the next reader resolves', async 
     invocation,
   );
 
+  assert.deepEqual(await readPublished(store), before, 'saving must leave active budgets unchanged');
+  response = await approveSaved(store, response);
   assert.equal(response.status, 200);
   assert.equal(response.jsonBody.state, 'active');
   assert.ok(response.jsonBody.targets.every((target) => target.outcome === 'verified'));
@@ -561,16 +576,18 @@ test('a fallback graph replacement is published and becomes the effective compil
   const globalBinding = before.entitlementSnapshot.bindings.find(
     (binding) => binding.target.kind === 'global',
   );
-  const widened = await change(requestWith({
+  let widened = await change(requestWith({
     roles: ['Governance.Own'],
     body: {
       bindingId: globalBinding.bindingId,
       changes: { modelAllowlist: ['coding-fast', 'coding-primary'] },
     },
   }), invocation);
+  widened = await approveSaved(store, widened);
   assert.equal(widened.status, 200);
 
-  const response = await changeFallbackPlan(
+  const beforeFallback = await readPublished(store);
+  let response = await changeFallbackPlan(
     requestWith({
       roles: ['Governance.Own'],
       body: {
@@ -581,6 +598,8 @@ test('a fallback graph replacement is published and becomes the effective compil
     invocation,
   );
 
+  assert.deepEqual(await readPublished(store), beforeFallback, 'saving must leave active fallback unchanged');
+  response = await approveSaved(store, response);
   assert.equal(response.status, 200);
   assert.ok(response.jsonBody.targets.every((target) => target.outcome === 'verified'));
 
@@ -687,7 +706,7 @@ test('an assignment grant is published and is what the next reader resolves', as
   const { changeAssignment } = handlersFor(store);
   const before = await readPublished(store);
 
-  const granted = await changeAssignment(
+  let granted = await changeAssignment(
     requestWith({
       roles: ['Governance.Own'],
       body: {
@@ -701,6 +720,8 @@ test('an assignment grant is published and is what the next reader resolves', as
     }),
     invocation,
   );
+  assert.deepEqual(await readPublished(store), before);
+  granted = await approveSaved(store, granted);
   assert.equal(granted.status, 200);
   assert.ok(granted.jsonBody.targets.every((target) => target.outcome === 'verified'));
 
@@ -721,7 +742,7 @@ test('an assignment revoke is published and is what the next reader resolves', a
   const { changeAssignment } = handlersFor(store);
   const before = await readPublished(store);
 
-  const revoked = await changeAssignment(
+  let revoked = await changeAssignment(
     requestWith({
       roles: ['Governance.Own'],
       body: {
@@ -732,6 +753,8 @@ test('an assignment revoke is published and is what the next reader resolves', a
     }),
     invocation,
   );
+  assert.deepEqual(await readPublished(store), before);
+  revoked = await approveSaved(store, revoked);
   assert.equal(revoked.status, 200);
   assert.ok(revoked.jsonBody.targets.every((target) => target.outcome === 'verified'));
 
@@ -749,7 +772,7 @@ test('an assignment change never lets the request name who issued it', async () 
   const store = await publishedStore();
   const { changeAssignment } = handlersFor(store);
 
-  const response = await changeAssignment(
+  let response = await changeAssignment(
     requestWith({
       roles: ['Governance.Own'],
       body: {
@@ -765,6 +788,7 @@ test('an assignment change never lets the request name who issued it', async () 
     invocation,
   );
 
+  response = await approveSaved(store, response);
   assert.equal(response.status, 200);
   const after = await readPublished(store);
   const created = after.assignmentSnapshot.assignments.find(

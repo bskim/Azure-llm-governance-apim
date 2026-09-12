@@ -157,8 +157,10 @@ test('a publish is refused while another revision is still in flight', async () 
   });
 });
 
-test('publishing a revision that was never approved is refused', async () => {
+test('an explicit local publish approves the saved draft without publishing ordinary saves', async () => {
   await withServer(async (base) => {
+    await clearInFlight(base);
+    const original = limitOf(await budgetsScreen(base), TARGET);
     const proposed = await post(base, '/api/local/budgets/propose', {
       budgetId: TARGET,
       changes: { amount: 30_000_000 },
@@ -166,9 +168,12 @@ test('publishing a revision that was never approved is refused', async () => {
     });
     const { revisionId } = await proposed.json();
 
-    const refused = await post(base, '/api/local/lifecycle/publish', { revisionId, actor: OWNER });
-    assert.equal(refused.status, 409);
-    assert.equal((await refused.json()).reasonCode, 'transition-not-allowed');
+    assert.equal(limitOf(await budgetsScreen(base), TARGET), original);
+    const published = await post(base, '/api/local/lifecycle/publish', { revisionId, actor: OWNER });
+    assert.equal(published.status, 200);
+    const result = await published.json();
+    assert.equal(result.state, 'active');
+    assert.ok(result.targets.every((target) => target.outcome === 'verified'));
   });
 });
 

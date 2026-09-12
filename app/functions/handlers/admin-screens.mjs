@@ -598,7 +598,7 @@ export function createLifecycleHandler({
           viewerCode,
           selfApprovalGranted,
           commandsAvailable,
-          recoveryAbandonmentGranted: authorization.capabilities.includes('approve-own-configuration'),
+          recoveryAbandonmentGranted: authorization.capabilities.includes('abandon-legacy-configuration'),
           storedProposalAvailableByRevision,
           callerIdentifiable,
         }),

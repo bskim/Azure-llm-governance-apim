@@ -9,7 +9,7 @@ import {
   unavailable,
 } from './admin-access.mjs';
 import { addBudget, BudgetEditRefusedError, editBudget, removeBudget } from '../../governance-domain/policy/budget-edit.mjs';
-import { editFallbackPlan, FallbackEditRefusedError } from '../../governance-domain/policy/fallback-plan-edit.mjs';
+import { addFallbackPlan, editFallbackPlan, FallbackEditRefusedError } from '../../governance-domain/policy/fallback-plan-edit.mjs';
 import {
   addTeam,
   removeTeam,
@@ -223,7 +223,12 @@ export function createFallbackChangeHandler({
         return errorResponse(500, 'fallback_change_failed', { requestId });
       }
     }
-    if (typeof body?.planId !== 'string' || body.planId.length === 0) {
+    if (body?.command !== undefined && !['add', 'edit'].includes(body.command)) {
+      return errorResponse(400, 'fallback_command_unsupported', { requestId });
+    }
+    if (body?.command === 'add'
+      ? body.plan === null || typeof body.plan !== 'object' || Array.isArray(body.plan)
+      : typeof body?.planId !== 'string' || body.planId.length === 0) {
       return errorResponse(400, 'plan_required', { requestId });
     }
 
@@ -241,12 +246,21 @@ export function createFallbackChangeHandler({
     try {
       next = {
         ...snapshots,
-        fallbackPolicySnapshot: editFallbackPlan({
-          snapshot: snapshots.fallbackPolicySnapshot,
-          planId: body.planId,
-          changes: body.changes ?? {},
-          at: clock.nowIso(),
-        }),
+        fallbackPolicySnapshot: body.command === 'add'
+          ? addFallbackPlan({
+              snapshot: snapshots.fallbackPolicySnapshot,
+              plan: body.plan,
+              registry: snapshots.modelRegistrySnapshot,
+              teamCatalog: snapshots.entitlementSnapshot.teamCatalog,
+              issuedBy: { kind: 'subject', key: actorCode },
+              at: clock.nowIso(),
+            })
+          : editFallbackPlan({
+              snapshot: snapshots.fallbackPolicySnapshot,
+              planId: body.planId,
+              changes: body.changes ?? {},
+              at: clock.nowIso(),
+            }),
       };
     } catch (error) {
       return refuse(error, requestId);

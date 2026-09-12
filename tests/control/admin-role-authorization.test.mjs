@@ -159,13 +159,18 @@ test('three governance roles exist, and only two of them can change anything', (
   assert.deepEqual(writers.map(([name]) => name), ['own', 'administer']);
 });
 
-test('approving your own change is an authority only the owner role carries', () => {
+test('administrators and owners can self-approve, but legacy abandonment is owner-only', () => {
   const holders = Object.entries(GOVERNANCE_ROLES)
     .filter(([, role]) => role.capabilities.includes('approve-own-configuration'))
     .map(([name]) => name);
-  assert.deepEqual(holders, ['own']);
-  // The ordinary administrator keeps every other write capability, so the exception is
-  // an addition to that role rather than a different kind of administrator.
+  assert.deepEqual(holders, ['own', 'administer']);
+  assert.deepEqual(Object.entries(GOVERNANCE_ROLES)
+    .filter(([, role]) => role.capabilities.includes('abandon-legacy-configuration'))
+    .map(([name]) => name), ['own']);
+  const admin = authorizeGovernanceAccess({ roles: ['Governance.Administer'] });
+  assertGovernanceCapability(admin, 'approve-own-configuration');
+  assert.throws(() => assertGovernanceCapability(admin, 'abandon-legacy-configuration'),
+    { code: 'governance-capability-denied' });
   assert.deepEqual(
     GOVERNANCE_ROLES.administer.capabilities.filter(
       (capability) => !GOVERNANCE_ROLES.own.capabilities.includes(capability),

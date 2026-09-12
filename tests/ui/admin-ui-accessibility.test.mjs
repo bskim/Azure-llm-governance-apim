@@ -386,8 +386,11 @@ test('UI code renders text without HTML injection or client-side authorization c
   assert.doesNotMatch(script, /resumeStoredProposal[\s\S]{0,500}\bactor:/);
   // Both local-only lifecycle URLs must be unreachable once that predicate is false,
   // and there must be no third one that grew without a gate.
-  assert.equal((script.match(/'\/api\/local\/lifecycle\//g) ?? []).length, 1);
-  assert.equal((script.match(/`\/api\/local\/lifecycle\//g) ?? []).length, 1);
+  assert.equal((script.match(/'\/api\/local\/lifecycle\//g) ?? []).length, 0);
+  assert.equal((script.match(/`\/api\/local\/lifecycle\//g) ?? []).length, 2);
+  assert.match(script, /publishesProposal \? 'publish' : 'save'/);
+  assert.match(script, /record\.selfApproval\?\.available[\s\S]{0,180}lifecycle\.selfApproval/);
+  assert.match(script, /action\.command !== 'withdraw' && record\.availableCommands\.includes\('withdraw'\)/);
   // Budget edits reuse the same write path and refusal rendering as every other
   // authoring panel, with success handling for the payload it just sent.
   assert.match(

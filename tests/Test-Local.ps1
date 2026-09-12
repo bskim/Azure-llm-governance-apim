@@ -103,6 +103,7 @@ try {
         '.\tests\control\governance-publisher.test.mjs'         = 'The governance publication tests failed.'
         '.\tests\control\governance-set-edit.test.mjs'          = 'The entitlement and assignment edit tests failed.'
         '.\tests\control\governance-set-authoring.test.mjs'     = 'The budget and fallback authoring tests failed.'
+        '.\tests\control\fallback-plan-creation.test.mjs'       = 'The fallback plan creation tests failed.'
         '.\tests\control\removal-planning.test.mjs'             = 'The reference-aware removal planner tests failed.'
         '.\tests\control\removal-service.test.mjs'              = 'The removal draft lifecycle tests failed.'
         '.\tests\control\removal-handlers.test.mjs'             = 'The removal endpoint tests failed.'

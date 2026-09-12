@@ -14,10 +14,9 @@
  */
 
 export const GOVERNANCE_ROLES = Object.freeze({
-  // Separation of duties is the rule, and an organization with one administrator still
-  // has to be able to publish. The exception is a capability rather than a special case
-  // in the reducer, so who holds it is deployment configuration and every use of it is
-  // recorded as its own reason rather than as an ordinary approval.
+  // Administrators may explicitly approve their own drafts; the reducer records that
+  // authority separately from a second administrator's review. Legacy recovery remains
+  // an owner-only capability, independent of self-approval.
   own: Object.freeze({
     readScopes: Object.freeze(['self', 'team', 'global']),
     capabilities: Object.freeze([
@@ -27,6 +26,7 @@ export const GOVERNANCE_ROLES = Object.freeze({
       'publish-configuration',
       'write-notification-channel',
       'approve-own-configuration',
+      'abandon-legacy-configuration',
     ]),
   }),
   administer: Object.freeze({
@@ -37,6 +37,7 @@ export const GOVERNANCE_ROLES = Object.freeze({
       'write-entitlements',
       'publish-configuration',
       'write-notification-channel',
+      'approve-own-configuration',
     ]),
   }),
   read: Object.freeze({
@@ -83,9 +84,8 @@ export function assertRoleMapping(mapping) {
   const seen = new Map();
   for (const governanceRole of Object.keys(GOVERNANCE_ROLES)) {
     const values = mapping[governanceRole];
-    // The owner role is the one exception a deployment opts into. Leaving it unmapped
-    // means nobody can approve their own change, which is the stricter posture, so its
-    // absence is a choice rather than a misconfiguration.
+    // The optional owner role grants elevated legacy recovery, not the ordinary
+    // administrator's ability to approve their own draft.
     if (values === undefined && OPTIONAL_ROLES.includes(governanceRole)) continue;
     if (!Array.isArray(values) || values.length === 0) {
       fail(`roleMapping.${governanceRole} must name at least one claim value.`);

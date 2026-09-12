@@ -194,6 +194,38 @@ function canonicalFallbackEdges(edges, modelCodes) {
   return { ok: true, edges: normalized };
 }
 
+export function buildFallbackAddPayload(values) {
+  const planId = String(values.planId ?? '').trim();
+  const targetKind = String(values.targetKind ?? '');
+  const targetKey = targetKind === 'global' ? null : String(values.targetKey ?? '').trim();
+  if (!['global', 'team', 'subject', 'application'].includes(targetKind)
+    || !SAFE_ID.test(planId) || (targetKey !== null && !SAFE_ID.test(targetKey))) {
+    return { ok: false, error: 'fallbackTargetRequired' };
+  }
+  if (targetKind === 'team' && !(values.teamKeys ?? []).includes(targetKey)) {
+    return { ok: false, error: 'fallbackTeamUnknown' };
+  }
+  const enabled = values.enabled ?? false;
+  const modelSelectionIntent = values.modelSelectionIntent ?? FALLBACK_DEFAULTS.modelSelectionIntent;
+  const substitutionNotice = values.substitutionNotice ?? FALLBACK_DEFAULTS.substitutionNotice;
+  if (typeof enabled !== 'boolean' || !['pinned', 'preferred'].includes(modelSelectionIntent)
+    || !['header', 'inline'].includes(substitutionNotice)) {
+    return { ok: false, error: 'fallbackSettingsInvalid' };
+  }
+  if (substitutionNotice === 'inline' && modelSelectionIntent !== 'preferred') {
+    return { ok: false, error: 'fallbackNoticeRequiresPreferred' };
+  }
+  const edges = canonicalFallbackEdges(values.edges ?? [], values.modelCodes ?? []);
+  if (!edges.ok) return edges;
+  return {
+    ok: true,
+    payload: {
+      command: 'add',
+      plan: { planId, target: { kind: targetKind, key: targetKey }, enabled, modelSelectionIntent, substitutionNotice, edges: edges.edges },
+    },
+  };
+}
+
 export function buildFallbackEditPayload(authored, values) {
   const changes = {
     enabled: values.enabled,

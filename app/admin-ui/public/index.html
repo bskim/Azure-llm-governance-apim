@@ -622,6 +622,19 @@
               <p class="eyebrow" data-i18n="fallbackEdit.eyebrow">Proposing a change</p>
               <h2 id="fallback-edit-title" data-i18n="fallbackEdit.title">Change the existing fallback plan</h2>
               <p id="fallback-edit-help" class="policy-meta" data-i18n="fallbackEdit.help">Replace this plan's complete set of one-hop model connections or change its request settings. Plan identity, scope, issuer, and validity stay unchanged. This becomes a draft revision.</p>
+              <label for="fallback-edit-mode" data-i18n="fallbackAdd.mode">Plan operation</label>
+              <select id="fallback-edit-mode" aria-describedby="fallback-edit-help"></select>
+              <fieldset id="fallback-add-fields" hidden>
+                <legend data-i18n="fallbackAdd.identity">New plan identity and target</legend>
+                <label for="fallback-add-id" data-i18n="fallbackAdd.planId">Plan identifier</label>
+                <input id="fallback-add-id" type="text" maxlength="128" aria-describedby="fallback-add-target-help fallback-edit-error">
+                <label for="fallback-add-kind" data-i18n="fallbackAdd.targetKind">Target scope</label>
+                <select id="fallback-add-kind" aria-describedby="fallback-add-target-help"></select>
+                <label id="fallback-add-key-label" for="fallback-add-key" data-i18n="fallbackAdd.targetKey">Target identifier</label>
+                <input id="fallback-add-key" type="text" maxlength="128" list="fallback-add-key-options" aria-describedby="fallback-add-target-help fallback-edit-error">
+                <datalist id="fallback-add-key-options"></datalist>
+                <p id="fallback-add-target-help" class="policy-meta" data-i18n="fallbackAdd.targetHelp">Global uses no target identifier. Teams use an existing canonical team key; subjects use the gateway subject, and applications use the application client ID, not an administrator actor code.</p>
+              </fieldset>
               <label for="fallback-edit-enabled" data-i18n="fallbackEdit.enabledLabel">Ladder</label>
               <select id="fallback-edit-enabled" aria-describedby="fallback-edit-help fallback-edit-error"></select>
               <label for="fallback-edit-intent" data-i18n="fallbackEdit.intentLabel">What a request gets</label>

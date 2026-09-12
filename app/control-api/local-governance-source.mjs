@@ -1,4 +1,4 @@
-import { getDeterministicConfigurationRevisions, LOCAL_LIFECYCLE_ACTORS, LOCAL_SELF_APPROVERS } from '../local-adapters/deterministic-configuration-revisions.mjs';
+import { getDeterministicConfigurationRevisions, LOCAL_LIFECYCLE_ACTORS, LOCAL_SELF_APPROVERS, LOCAL_RECOVERY_ABANDONERS } from '../local-adapters/deterministic-configuration-revisions.mjs';
 import {
   getDeterministicGovernanceSnapshots,
 } from '../local-adapters/deterministic-governance-snapshots.mjs';
@@ -60,8 +60,9 @@ export function createLocalGovernanceSource({ evaluationTime }) {
       auditFixtures: RECORD_SCREEN_FIXTURE_NAMES,
       overviewSources: Object.freeze(['fixture', 'rollup']),
       entitlementViews: Object.freeze(['fixture', 'both-models']),
-      defaultLifecycleViewer: LOCAL_LIFECYCLE_ACTORS.approver,
+      defaultLifecycleViewer: LOCAL_LIFECYCLE_ACTORS.author,
       selfApprovalActors: LOCAL_SELF_APPROVERS,
+      recoveryAbandonmentActors: LOCAL_RECOVERY_ABANDONERS,
       // Whether this source can show the published meters at all. A source that cannot
       // says so, and the routing refuses the read instead of answering an empty list,
       // which on a price screen would read as free rather than as unknown.

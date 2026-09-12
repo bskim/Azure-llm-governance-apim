@@ -84,6 +84,103 @@ function handlerFor(store, overrides = {}) {
 
 const invocation = { invocationId: 'invocation-1', error: () => {} };
 
+test('default administrators save without publication writes, then explicitly self-approve the immutable draft', async () => {
+  for (const initialized of [false, true]) {
+    const store = createInMemoryGovernanceStore();
+    const handler = handlerFor(store);
+    if (initialized) {
+      await handler(requestWith({ body: { content: content(), initialOnly: true } }), invocation);
+    }
+    const priorRevisions = await store.queryConfigurationRevisions({ scopeGroupId: SCOPE_GROUP_ID });
+    const priorSnapshots = await store.queryGovernanceSnapshots({ scopeGroupId: SCOPE_GROUP_ID, evaluationTime: NOW });
+    let publications = 0;
+    const durablePublisher = createGovernancePublisher({ store, scopeGroupId: SCOPE_GROUP_ID, clock });
+    const traced = handlerFor(store, {
+      publisher: { publish: async (input) => { publications += 1; return durablePublisher.publish(input); } },
+    });
+    const created = await traced(requestWith({
+      body: { content: contentWithBudget(222_222), actorCode: 'not-the-author', selfApprovalGranted: false },
+    }), invocation);
+    assert.equal(created.status, 201);
+    assert.equal(created.jsonBody.outcome, 'proposed');
+    assert.equal(created.jsonBody.state, 'draft');
+    assert.ok(created.jsonBody.etag);
+    assert.equal(publications, 0, 'saving must never call the target publisher');
+    assert.ok(created.jsonBody.targets.every((target) => target.outcome === 'pending'));
+    assert.deepEqual(await store.queryGovernanceSnapshots({ scopeGroupId: SCOPE_GROUP_ID, evaluationTime: NOW }), priorSnapshots);
+    const revisionId = created.jsonBody.revisionId;
+    const draft = await store.readConfigurationRevision({ scopeGroupId: SCOPE_GROUP_ID, revisionId });
+    const storedContent = await store.readConfigurationDraft({ scopeGroupId: SCOPE_GROUP_ID, revisionId });
+    const actor = DERIVER.deriveActorCode({ tenantId: 'tenant-admin-0001', subjectId: 'object-admin-0001' });
+    assert.equal(draft.document.authoredBy, actor);
+    assert.equal(draft.document.approvedBy, null);
+    assert.equal(draft.document.history.length, 1);
+
+    for (const roles of [['Governance.Read'], ['Unknown.Role']]) {
+      for (const body of [{ content: content() }, { resume: true, revisionId }]) {
+        const denied = await traced(requestWith({ roles, body }), invocation);
+        assert.equal(denied.status, 403);
+      }
+    }
+    assert.deepEqual(await store.readConfigurationRevision({ scopeGroupId: SCOPE_GROUP_ID, revisionId }), draft);
+    assert.equal(publications, 0);
+
+    const resumed = await traced(requestWith({ body: { resume: true, revisionId } }), invocation);
+    assert.equal(resumed.status, 200);
+    assert.equal(resumed.jsonBody.state, 'active');
+    assert.equal(publications, 1);
+    assert.ok(resumed.jsonBody.targets.every((target) => target.outcome === 'verified'));
+    const active = (await store.readConfigurationRevision({ scopeGroupId: SCOPE_GROUP_ID, revisionId })).document;
+    assert.equal(active.authoredBy, actor);
+    assert.equal(active.approvedBy, actor);
+    assert.equal(active.publishedBy, actor);
+    assert.deepEqual(active.history.slice(0, draft.document.history.length), draft.document.history);
+    assert.equal(active.history.find((entry) => entry.command === 'approve').reasonCode, 'self-approval-granted');
+    assert.ok(active.history.filter((entry) => entry.command !== 'target-outcome').every((entry) => entry.actor === actor));
+    assert.ok(active.history.filter((entry) => entry.command === 'target-outcome')
+      .every((entry) => active.targets.some((target) => target.targetCode === entry.actor)));
+    assert.deepEqual(await store.readConfigurationDraft({ scopeGroupId: SCOPE_GROUP_ID, revisionId }), storedContent);
+    for (const prior of priorRevisions) {
+      const current = await store.readConfigurationRevision({ scopeGroupId: SCOPE_GROUP_ID, revisionId: prior.revisionId });
+      assert.deepEqual(current.document.history.slice(0, prior.history.length), prior.history);
+    }
+    const published = await createPublishedPolicySource({ store, scopeGroupId: SCOPE_GROUP_ID, clock })();
+    assert.equal(published.budgetSnapshot.budgets.find((entry) => entry.budgetId === 'budget-organization-monthly').limit.amount, 222_222);
+  }
+});
+
+test('a default administrator retries a failed explicit self-publication without changing its approval or draft', async () => {
+  const store = createInMemoryGovernanceStore();
+  const created = await handlerFor(store)(requestWith({ body: { content: content() } }), invocation);
+  assert.equal(created.status, 201);
+  const revisionId = created.jsonBody.revisionId;
+  const draft = await store.readConfigurationDraft({ scopeGroupId: SCOPE_GROUP_ID, revisionId });
+  const failed = await handlerFor(store, {
+    publisher: {
+      publish: async ({ revision }) => ({
+        revision: {
+          ...revision,
+          targets: revision.targets.map((target) => ({
+            ...target, outcome: 'failed', reasonCode: 'gateway-unreachable',
+          })),
+        },
+      }),
+    },
+  })(requestWith({ body: { resume: true, revisionId } }), invocation);
+  assert.equal(failed.status, 200);
+  assert.equal(failed.jsonBody.state, 'failed');
+  const before = (await store.readConfigurationRevision({ scopeGroupId: SCOPE_GROUP_ID, revisionId })).document;
+  const retry = await handlerFor(store)(requestWith({ body: { resume: true, revisionId } }), invocation);
+  assert.equal(retry.status, 200);
+  assert.equal(retry.jsonBody.state, 'active');
+  assert.ok(retry.jsonBody.targets.every((target) => target.outcome === 'verified'));
+  const active = (await store.readConfigurationRevision({ scopeGroupId: SCOPE_GROUP_ID, revisionId })).document;
+  assert.deepEqual(active.history.slice(0, before.history.length), before.history);
+  assert.equal(active.history.filter((entry) => entry.reasonCode === 'self-approval-granted').length, 1);
+  assert.equal(active.approvedBy, before.approvedBy);
+  assert.deepEqual(await store.readConfigurationDraft({ scopeGroupId: SCOPE_GROUP_ID, revisionId }), draft);
+});
+
 test('a completed publication does not treat multi-team membership as a catalogue fault', async () => {
   const store = createInMemoryGovernanceStore();
   const warned = [];
@@ -450,8 +547,8 @@ test('an untouched legacy failed revision without its draft can be securely aban
     requestWith({ body: { content: content() }, objectId: 'object-admin-0003' }),
     invocation,
   );
-  assert.equal(fresh.status, 409);
-  assert.equal(fresh.jsonBody.reasonCode, 'separation-of-duties');
+  assert.equal(fresh.status, 201);
+  assert.equal(fresh.jsonBody.state, 'draft');
   assert.equal((await store.queryConfigurationRevisions({ scopeGroupId: SCOPE_GROUP_ID }))[1].revisionId, 'revision-0002');
 });
 
@@ -516,8 +613,9 @@ test('only a high-trust actor can clear a zero-verified legacy draft or approval
         requestWith({ roles: ['Governance.Own'], body: { content: content() }, objectId: 'object-admin-0003' }),
         invocation,
       );
-      assert.equal(replacement.status, 200, `${authoredBy}/${state}: replacement`);
-      assert.equal(replacement.jsonBody.state, 'active');
+      assert.equal(replacement.status, 201, `${authoredBy}/${state}: replacement`);
+      assert.equal(replacement.jsonBody.state, 'draft');
+      assert.ok(replacement.jsonBody.targets.every((target) => target.outcome === 'pending'));
       assert.equal(replacement.jsonBody.revisionId, 'revision-0003');
     }
   }
@@ -587,7 +685,11 @@ test('initial-only resume cannot overwrite a later interrupted publication', asy
     invocation,
   );
   assert.equal(second.jsonBody.revisionId, 'revision-0002');
-  assert.notEqual(second.jsonBody.state, 'active');
+  assert.equal(second.jsonBody.state, 'draft');
+  const interrupted = await handlerFor(store, { publisher: failingPublisher })(
+    requestWith({ body: { resume: true, revisionId: second.jsonBody.revisionId } }), invocation,
+  );
+  assert.equal(interrupted.jsonBody.state, 'failed');
 
   const beforeRevisions = await store.queryConfigurationRevisions({ scopeGroupId: SCOPE_GROUP_ID });
   const beforeSnapshots = await store.queryGovernanceSnapshots({ scopeGroupId: SCOPE_GROUP_ID, evaluationTime: NOW });
@@ -661,7 +763,7 @@ test('a caller whose validated tenant or object identifier is absent is refused 
   }
 });
 
-test('bootstrap preserves its import author while later revisions require a distinct pseudonymous approver', async () => {
+test('bootstrap preserves its import author and another administrator may explicitly approve later drafts', async () => {
   const store = createInMemoryGovernanceStore();
   const first = await handlerFor(store)(
     requestWith({ body: { content: content(), initialOnly: true, actorCode: 'somebody-else' }, objectId: 'object-admin-0001' }),
@@ -673,8 +775,8 @@ test('bootstrap preserves its import author while later revisions require a dist
     requestWith({ body: { content: content(), actorCode: 'somebody-else' }, objectId: 'object-admin-0002' }),
     invocation,
   );
-  assert.equal(second.status, 409);
-  assert.equal(second.jsonBody.reasonCode, 'separation-of-duties');
+  assert.equal(second.status, 201);
+  assert.equal(second.jsonBody.state, 'draft');
 
   let revisions = await store.queryConfigurationRevisions({ scopeGroupId: SCOPE_GROUP_ID });
   const bootstrapApprover = DERIVER.deriveActorCode({ tenantId: 'tenant-admin-0001', subjectId: 'object-admin-0001' });
@@ -705,8 +807,8 @@ test('a non-import first write is attributed to its administrator, not bootstrap
     invocation,
   );
 
-  assert.equal(response.status, 409);
-  assert.equal(response.jsonBody.reasonCode, 'separation-of-duties');
+  assert.equal(response.status, 201);
+  assert.equal(response.jsonBody.state, 'draft');
   const [revision] = await store.queryConfigurationRevisions({ scopeGroupId: SCOPE_GROUP_ID });
   assert.equal(
     revision.authoredBy,
@@ -727,8 +829,8 @@ test('a resuming administrator approves and publishes an immutable proposal from
     requestWith({ body: { content: proposed }, objectId: 'object-admin-0002' }),
     invocation,
   );
-  assert.equal(created.status, 409);
-  assert.equal(created.jsonBody.reasonCode, 'separation-of-duties');
+  assert.equal(created.status, 201);
+  assert.equal(created.jsonBody.state, 'draft');
 
   const mismatch = await handlerFor(store)(
     requestWith({ body: { content: contentWithBudget(999_999), resume: true, revisionId: 'revision-0002' }, objectId: 'object-admin-0003' }),
@@ -754,6 +856,7 @@ test('a resuming administrator approves and publishes an immutable proposal from
   const revision = (await store.queryConfigurationRevisions({ scopeGroupId: SCOPE_GROUP_ID }))[1];
   assert.equal(revision.authoredBy, DERIVER.deriveActorCode({ tenantId: 'tenant-admin-0001', subjectId: 'object-admin-0002' }));
   assert.equal(revision.approvedBy, DERIVER.deriveActorCode({ tenantId: 'tenant-admin-0001', subjectId: 'object-admin-0003' }));
+  assert.equal(revision.history.some((entry) => entry.reasonCode === 'self-approval-granted'), false);
 });
 
 test('only the draft author can withdraw it, and a withdrawn draft no longer blocks a new proposal', async () => {
@@ -798,8 +901,8 @@ test('only the draft author can withdraw it, and a withdrawn draft no longer blo
     requestWith({ body: { content: contentWithBudget(333_333) }, objectId: 'object-admin-0002' }),
     invocation,
   );
-  assert.equal(second.status, 409);
-  assert.equal(second.jsonBody.reasonCode, 'separation-of-duties');
+  assert.equal(second.status, 201);
+  assert.equal(second.jsonBody.state, 'draft');
   revisions = await store.queryConfigurationRevisions({ scopeGroupId: SCOPE_GROUP_ID });
   assert.equal(revisions[1].state, 'withdrawn');
   assert.equal(revisions[1].history.at(-1).actor, revisions[1].authoredBy);
@@ -846,8 +949,8 @@ test('a rejected incomplete proposal leaves no in-flight revision', async () => 
   assert.equal(refused.status, 400);
 
   const second = await handlerFor(store)(requestWith({ body: { content: content() } }), invocation);
-  assert.equal(second.status, 409);
-  assert.equal(second.jsonBody.reasonCode, 'separation-of-duties');
+  assert.equal(second.status, 201);
+  assert.equal(second.jsonBody.state, 'draft');
 });
 
 test('a resume request refuses replacement content even when no invalid draft was stored', async () => {
@@ -901,7 +1004,7 @@ test('a governance set larger than a resolution request is accepted, but not an 
   assert.equal(refused.jsonBody.error.code, 'body_too_large');
 });
 
-test('the approver is deployment-owned and must differ from the author', () => {
+test('the actor deriver is deployment-owned and required', () => {
   const store = createInMemoryGovernanceStore();
   const publisher = createGovernancePublisher({ store, scopeGroupId: SCOPE_GROUP_ID, clock });
   const base = { store, publisher, clock, scopeGroupId: SCOPE_GROUP_ID, expectedAudience: AUDIENCE };

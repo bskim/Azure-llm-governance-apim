@@ -6,6 +6,7 @@ import {
   buildEntitlementAddPayload,
   buildEntitlementEditPayload,
   buildEntitlementStatePayload,
+  buildFallbackAddPayload,
   buildFallbackEditPayload,
 } from '../../app/admin-ui/public/governance-authoring.mjs';
 import { projectFallback } from '../../app/control-api/fallback-read-model-projector.mjs';
@@ -203,6 +204,49 @@ test('fallback payloads preserve the current authored values and reject no-ops',
       },
     },
   });
+});
+
+test('fallback creation builds safe defaults and validates identifiers, teams, settings, and edges', () => {
+  const values = {
+    planId: 'plan-global-new', targetKind: 'global', targetKey: '',
+    edges: [{ from: 'coding-secondary', to: 'coding-primary' }],
+    modelCodes: ['coding-primary', 'coding-secondary'],
+  };
+  assert.deepEqual(buildFallbackAddPayload(values), {
+    ok: true,
+    payload: {
+      command: 'add',
+      plan: {
+        planId: 'plan-global-new', target: { kind: 'global', key: null },
+        enabled: false, modelSelectionIntent: 'pinned', substitutionNotice: 'header',
+        edges: values.edges,
+      },
+    },
+  });
+  const configured = buildFallbackAddPayload({
+    ...values, enabled: true, modelSelectionIntent: 'preferred', substitutionNotice: 'inline',
+  });
+  assert.equal(configured.payload.plan.enabled, true);
+  assert.equal(configured.payload.plan.substitutionNotice, 'inline');
+  for (const [change, error] of [
+    [{ planId: '' }, 'fallbackTargetRequired'],
+    [{ targetKind: 'organization' }, 'fallbackTargetRequired'],
+    [{ targetKind: 'subject', targetKey: '' }, 'fallbackTargetRequired'],
+    [{ targetKind: 'team', targetKey: 'unknown' }, 'fallbackTeamUnknown'],
+    [{ enabled: 'true' }, 'fallbackSettingsInvalid'],
+    [{ substitutionNotice: 'inline' }, 'fallbackNoticeRequiresPreferred'],
+    [{ edges: [{ from: 'missing', to: 'coding-primary' }] }, 'fallbackModelUnknown'],
+    [{ edges: [values.edges[0], values.edges[0]] }, 'fallbackDuplicateSource'],
+  ]) {
+    assert.deepEqual(buildFallbackAddPayload({ ...values, ...change }), { ok: false, error });
+  }
+  for (const targetKind of ['team', 'subject', 'application']) {
+    const created = buildFallbackAddPayload({
+      ...values, targetKind, targetKey: 'known-key', teamKeys: ['known-key'],
+    });
+    assert.equal(created.ok, true);
+    assert.deepEqual(created.payload.plan.target, { kind: targetKind, key: 'known-key' });
+  }
 });
 
 test('fallback graph payloads reject invalid whole-set replacements', () => {
